@@ -872,8 +872,17 @@ jobs:
         # ✓ Use least-privilege RBAC (not cluster-admin in production)
         # ✓ Audit kubectl access logs
       
-      - name: Deploy to Kubernetes
-        # DEPLOYMENT: Update running application
+      - name: Apply Kubernetes manifests
+        # APPLY MANIFESTS: Create or update resources if they don't exist
+        run: |
+          kubectl apply -f kubernetes/deployment.yml
+          kubectl apply -f kubernetes/service.yml
+          kubectl apply -f kubernetes/ingress.yml
+          kubectl apply -f kubernetes/cluster-issuer-staging.yml
+          kubectl apply -f kubernetes/cluster-issuer-prod.yml
+      
+      - name: Update deployment with new image
+        # DEPLOYMENT: Update running application with new image tag
         
         run: |
           # Extract the SHA tag from the metadata action output
@@ -888,6 +897,12 @@ jobs:
           kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} \
             -n ${{ env.KUBE_NAMESPACE }} \
             --timeout=5m
+      
+      - name: Verify deployment
+        # VERIFICATION: Confirm pods are running successfully
+        run: |
+          kubectl get pods -l app=weather-app -n ${{ env.KUBE_NAMESPACE }}
+          kubectl get deployment ${{ env.DEPLOYMENT_NAME }} -n ${{ env.KUBE_NAMESPACE }}
         # COMMAND BREAKDOWN:
         #
         # SHA_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep "main-" | cut -d':' -f2)
