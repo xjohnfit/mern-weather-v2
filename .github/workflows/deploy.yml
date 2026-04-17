@@ -504,7 +504,7 @@ jobs:
           username: ${{ env.DOCKER_USERNAME }}
           # FROM: Global env (xjohnfit)
           
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
           # FROM: GitHub repository secret
           # MUST CREATE: Repository → Settings → Secrets → DOCKER_PASSWORD
           #
