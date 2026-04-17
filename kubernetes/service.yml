@@ -266,9 +266,7 @@ spec:
 #     - 172.17.0.5:8080  # Pod #1 IP (changes when pod restarts!)
 #
 # Problems:
-# 1. Pod restarts → new
-
- IP → Ingress broken
+# 1. Pod restarts → new IP → Ingress broken
 # 2. Rolling update → IPs change → Ingress broken
 # 3. Multiple replicas → only connects to one pod
 # 4. Manual load balancing → complex Ingress config
