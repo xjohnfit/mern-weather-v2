@@ -1,0 +1,297 @@
+# ============================================
+# KUBERNETES DEPLOYMENT MANIFEST
+# ============================================
+# This file defines the desired state of your application in Kubernetes
+# Kubernetes continuously works to make actual state match desired state
+
+apiVersion: apps/v1
+# WHAT: Specifies which version of the Kubernetes API to use
+# WHY: Different APIs have different features
+# apps/v1: Stable API for Deployments (introduced in Kubernetes 1.9)
+
+kind: Deployment
+# WHAT: Type of Kubernetes resource we're creating
+# OPTIONS: Deployment, Service, Pod, ConfigMap, Secret, Ingress, etc.
+# Deployment: Manages multiple replicas of pods and handles rolling updates
+
+metadata:
+  # Metadata: information about this Deployment resource
+  
+  name: weather-app
+  # WHAT: Unique name for this Deployment in the namespace
+  # USED BY: kubectl get deployment weather-app
+  # USED BY: other resources referencing this Deployment
+  
+  labels:
+    app: weather-app
+    # WHAT: Key-value pairs for organizing resources
+    # USAGE: kubectl get deployments -l app=weather-app
+    # USAGE: Monitoring tools can group by labels
+    # BEST PRACTICE: Use consistent labeling across all resources
+
+spec:
+  # Spec: desired state specification
+  
+  replicas: 2
+  # WHAT: Number of pod copies to maintain
+  # WHY 2? High availability - if one pod crashes, traffic goes to the other
+  # Kubernetes ensures 2 are ALWAYS running
+  # 
+  # SCALING:
+  # - kubectl scale deployment weather-app --replicas=5 (manual)
+  # - HorizontalPodAutoscaler (automatic based on CPU/memory)
+  #
+  # DURING DEPLOYMENT:
+  # - Rolling update: starts new replicas, waits for health, then kills old ones
+  # - Zero downtime!
+  
+  selector:
+    # WHAT: Tells Deployment which Pods it manages
+    # HOW: Matches Pods with these labels
+    matchLabels:
+      app: weather-app
+      # MUST MATCH: spec.template.metadata.labels.app
+      # Deployment watches all Pods with label app=weather-app
+      # If <2 exist, creates more. If >2 exist, terminates extras.
+  
+  template:
+    # Template: blueprint for creating Pods
+    # Every time Deployment creates a Pod, it uses this template
+    
+    metadata:
+      labels:
+        app: weather-app
+        # CRITICAL: Must match selector.matchLabels above!
+        # Additional labels can be added here for monitoring, versions, etc.
+        # Example: version: "v1.2.3", environment: "production"
+    
+    spec:
+      # Pod specification: what to run inside the Pod
+      
+      containers:
+      # CONTAINERS: Array of container definitions
+      # Usually 1 container per Pod (microservices pattern)
+      # Multiple containers = "sidecar pattern" (e.g., app + logging agent)
+      
+      - name: weather-app
+        # WHAT: Name of this container within the Pod
+        # USAGE: kubectl logs weather-app-<pod-id> -c weather-app
+        # USAGE: kubectl exec -it weather-app-<pod-id> -c weather-app -- /bin/sh
+        
+        image: xjohnfit/weather-app:latest
+        # WHAT: Docker image to run
+        # FORMAT: [registry/]repository:tag
+        # xjohnfit = Docker Hub username
+        # weather-app = repository name
+        # latest = tag (GitHub Actions will push main-<sha> tags too)
+        # 
+        # PULL LOCATION: 
+        # - Docker Hub (default): docker.io/xjohnfit/weather-app:latest
+        # - Private registry example: gcr.io/my-project/weather-app:v1.2.3
+        #
+        # TAG STRATEGY:
+        # - :latest = always get newest (good for dev, risky for prod)
+        # - :v1.2.3 = specific version (recommended for prod)
+        # - :main-abc123 = git commit SHA (what GitHub Actions does)
+        
+        imagePullPolicy: Always
+        # WHAT: When to pull the Docker image
+        # OPTIONS:
+        # - Always: pull on every pod creation (ensures fresh image)
+        # - IfNotPresent: only pull if not cached on node
+        # - Never: only use locally cached images
+        # 
+        # WHY Always with :latest?
+        # - :latest tag can point to different images over time
+        # - Without Always, node might use old cached :latest
+        # - With Always, ensures you actually get the latest build
+        #
+        # TRADEOFF: Slightly slower pod starts (image pull time)
+        # but guarantees correct version deployed
+        
+        ports:
+        - containerPort: 8080
+          # WHAT: Port the container listens on
+          # MATCHES: Dockerfile EXPOSE 8080 and nginx.conf listen 8080
+          # DOES NOT: Actually expose port to outside world
+          #           (Service does that)
+          # PURPOSE: Documentation + Service can reference this by name
+          
+          protocol: TCP
+          # WHAT: Network protocol
+          # OPTIONS: TCP (most web apps) or UDP (video streaming, gaming)
+          # TCP: reliable, ordered delivery (HTTP, HTTPS, WebSocket)
+        
+        resources:
+          # WHAT: CPU and memory limits for this container
+          # WHY: Prevents one app from consuming all node resources
+          # WHY: Kubernetes uses this for scheduling (which node has capacity?)
+          
+          requests:
+            # REQUESTS: Guaranteed minimum resources
+            # Kubernetes scheduler only places Pod on nodes with this much free
+            memory: "128Mi"
+            # 128 MiB (mebibytes) = 128 × 1024 × 1024 bytes ≈ 134 MB
+            # USAGE: nginx + static files = ~30MB, buffer = ~100MB
+            # If container uses <128Mi, no problem
+            # If node only has 100Mi free, Pod won't be scheduled there
+            
+            cpu: "100m"
+            # 100 milliCPU = 0.1 CPU core = 10% of one core
+            # 1000m = 1 full CPU core
+            # USAGE: nginx serving static files is very light on CPU
+            # Burst usage during high traffic is okay (see limits below)
+          
+          limits:
+            # LIMITS: Maximum resources allowed
+            # If container exceeds limits, Kubernetes takes action
+            memory: "256Mi"
+            # 256 MiB hard limit
+            # EXCEEDED: Kubernetes kills Pod (OOMKilled status)
+            # Pod restarts automatically (Deployment ensures replicas=2)
+            # REASON: Prevents memory leaks from crashing entire node
+            # 
+            # SIZING GUIDE:
+            # - Too low: frequent OOMKills, poor user experience
+            # - Too high: wastes resources, reduces cluster efficiency
+            # - Rule of thumb: 2x requests is good starting point
+            
+            cpu: "200m"
+            # 200 milliCPU = 0.2 CPU cores = 20% of one core
+            # EXCEEDED: Container is throttled (slowed down), NOT killed
+            # EFFECT: Slower response times during high load
+            # TRADEOFF: 2x CPU request allows bursts while protecting node
+        
+        livenessProbe:
+          # WHAT: Health check to detect if container is alive
+          # PURPOSE: Restart unhealthy containers automatically
+          # SCENARIO: nginx crashes, frozen, deadlock
+          # ACTION: If fails, Kubernetes kills container and starts new one
+          
+          httpGet:
+            path: /
+            # WHAT: URL path to check
+            # nginx serves index.html at /
+            # Returns HTTP 200 if healthy
+            # Returns HTTP 404/500 if unhealthy
+            
+            port: 8080
+            # MATCHES: containerPort above
+            # Kubernetes makes HTTP request to http://<pod-ip>:8080/
+          
+          initialDelaySeconds: 30
+          # WHAT: Wait time after container starts before first check
+          # WHY: Container needs time to start nginx and load files
+          # 30 seconds: generous for nginx (usually starts in 2-3 seconds)
+          # TOO SHORT: False failures during startup
+          # TOO LONG: Slow to detect actual problems
+          
+          periodSeconds: 10
+          # WHAT: How often to check (every 10 seconds)
+          # OPTIONS: 5-30 seconds typically
+          # 10 seconds: balanced (detects issues quickly without overhead)
+          #
+          # MATH: (24 hours × 3600 sec) / 10 sec = 8640 checks per day
+          # Negligible overhead for 8640 tiny HTTP requests
+        
+        readinessProbe:
+          # WHAT: Health check to know if container is ready for traffic
+          # PURPOSE: Remove pod from Service load balancing if not ready
+          # DIFFERENCE from liveness:
+          # - Liveness: Is it alive? (kill if no)
+          # - Readiness: Is it ready for traffic? (remove from load balancer if no)
+          #
+          # SCENARIO: Rolling update
+          # 1. New pod starts
+          # 2. readinessProbe fails (nginx starting up)
+          # 3. Service sends traffic to old pods only
+          # 4. readinessProbe succeeds (nginx ready)
+          # 5. Service starts sending traffic to new pod
+          # 6. Old pod terminates
+          # = Zero downtime!
+          
+          httpGet:
+            path: /
+            port: 8080
+            # Same check as livenessProbe
+            # Some apps use /health for liveness, /ready for readiness
+            # Since we're just serving static files, / works for both
+          
+          initialDelaySeconds: 5
+          # SHORTER than liveness (5s vs 30s)
+          # WHY? We want to add healthy pods to load balancer quickly
+          # nginx starts in 2-3 seconds, so 5s is safe
+          
+          periodSeconds: 5
+          # CHECK MORE OFTEN than liveness (5s vs 10s)
+          # WHY? Faster to detect and remove unhealthy pods from traffic
+          # More important for user experience (don't route to broken pods)
+
+# ============================================
+# HOW THIS ALL WORKS TOGETHER
+# ============================================
+#
+# 1. DEPLOYMENT CREATES REPLICASET:
+#    kubectl apply -f deployment.yml
+#    → Deployment controller sees desired replicas=2
+#    → Creates ReplicaSet with same pod template
+#
+# 2. REPLICASET CREATES PODS:
+#    → ReplicaSet controller sees 0 pods exist, needs 2
+#    → Creates Pod #1 and Pod #2 using template
+#    
+# 3. SCHEDULER ASSIGNS NODES:
+#    → Scheduler sees 2 unscheduled pods
+#    → Checks resources: needs 128Mi RAM, 100m CPU per pod
+#    → Finds nodes with capacity
+#    → Assigns Pod #1 to node-1, Pod #2 to node-2
+#
+# 4. KUBELET STARTS CONTAINERS:
+#    → kubelet on node-1 sees Pod #1 assigned
+#    → Pulls image: docker pull xjohnfit/weather-app:latest
+#    → Starts container: docker run -p 8080:8080 weather-app
+#    → Container runs: dumb-init → nginx -g daemon off
+#
+# 5. HEALTH CHECKS BEGIN:
+#    → Wait 30s (initialDelaySeconds)
+#    → livenessProbe: curl http://pod-1-ip:8080/ (200 OK ✓)
+#    → Wait 5s (readiness initialDelaySeconds)
+#    → readinessProbe: curl http://pod-1-ip:8080/ (200 OK ✓)
+#    → Pod marked as Ready
+#    → Service adds pod to load balancer endpoints
+#
+# 6. CONTINUOUS MONITORING:
+#    Every 10s: liveness check (kill if fails 3 times)
+#    Every 5s: readiness check (remove from LB if fails)
+#
+# 7. HANDLING FAILURES:
+#    Pod crash:
+#    → ReplicaSet sees 1 pod running, needs 2
+#    → Creates new pod
+#    → Total downtime: 0 (other replica handles traffic)
+#    
+#    Pod unhealthy but running:
+#    → livenessProbe fails
+#    → Kubernetes kills container
+#    → Restarts container in same pod
+#    → Total downtime: ~35s (30s initial + 5s startup)
+#    
+#    Pod not ready:
+#    → readinessProbe fails
+#    → Service removes from endpoints
+#    → Traffic goes to other replica
+#    → Total downtime: 0
+#
+# 8. ROLLING UPDATES:
+#    kubectl set image deployment/weather-app weather-app=xjohnfit/weather-app:v2
+#    → Deployment creates new ReplicaSet with :v2 image
+#    → New ReplicaSet creates Pod #3 (:v2)
+#    → Wait for Pod #3 readinessProbe success
+#    → Service adds Pod #3 to load balancer
+#    → Old ReplicaSet scales down: terminates Pod #1 (:v1)
+#    → New ReplicaSet creates Pod #4 (:v2)
+#    → Wait for Pod #4 readinessProbe success
+#    → Service adds Pod #4 to load balancer
+#    → Old ReplicaSet terminates Pod #2 (:v1)
+#    → Rolling update complete!
+#    → Zero downtime! Traffic always flowing to healthy pods.

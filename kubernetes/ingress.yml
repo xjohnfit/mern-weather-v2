@@ -1,0 +1,608 @@
+# ============================================
+# KUBERNETES INGRESS MANIFEST
+# ============================================
+# Ingress exposes HTTP/HTTPS routes from outside the cluster to Services
+# Think of it as a smart reverse proxy + load balancer for your cluster
+
+apiVersion: networking.k8s.io/v1
+# WHAT: Kubernetes networking API version
+# networking.k8s.io/v1: Stable Ingress API (since Kubernetes 1.19)
+# Previous versions used extensions/v1beta1 (deprecated)
+
+kind: Ingress
+# WHAT: Type of resource we're creating
+# Ingress: Rules for routing external traffic to internal Services
+
+metadata:
+  name: weather-app-ingress
+  # WHAT: Unique name for this Ingress resource
+  # USAGE: kubectl get ingress weather-app-ingress
+  # BEST PRACTICE: Include "ingress" in name for clarity
+  
+  annotations:
+    # ANNOTATIONS: Key-value pairs that configure Ingress Controller behavior
+    # Different controllers (Traefik, nginx, HAProxy) use different annotations
+    # These are Traefik-specific annotations
+    
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    # WHAT: Defines which Traefik entrypoints to use
+    # ENTRYPOINTS: Named network listeners in Traefik configuration
+    # 
+    # "web" = HTTP port (typically 80)
+    # "websecure" = HTTPS port (typically 443)
+    # 
+    # WHY BOTH?
+    # - "web": Accept HTTP requests (will be redirected to HTTPS)
+    # - "websecure": Accept HTTPS requests (primary traffic)
+    # 
+    # TRAEFIK CONFIGURATION (on your VPS):
+    # entryPoints:
+    #   web:
+    #     address: ":80"
+    #   websecure:
+    #     address: ":443"
+    #
+    # RESULT: 
+    # - HTTP traffic (port 80) hits "web" entrypoint
+    # - HTTPS traffic (port 443) hits "websecure" entrypoint
+    # - Both are routed according to Ingress rules
+    
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # WHAT: Enable TLS/HTTPS for this Ingress
+    # "true" = Traefik will handle HTTPS connections
+    # 
+    # WHAT TRAEFIK DOES:
+    # 1. Listens for HTTPS on port 443
+    # 2. Performs TLS handshake with client browser
+    # 3. Decrypts HTTPS traffic (TLS termination)
+    # 4. Forwards unencrypted HTTP to backend Service
+    # 5. Encrypts response from Service
+    # 6. Sends HTTPS response to client
+    #
+    # WHY TLS TERMINATION AT INGRESS?
+    # - Services inside cluster don't need TLS (trusted network)
+    # - Centralized certificate management
+    # - Reduces CPU load on application pods
+    # - Simplifies application code (no HTTPS handling needed)
+    #
+    # FLOW:
+    # Client browser (HTTPS) 
+    #   → Traefik (decrypt) 
+    #   → Service (HTTP) 
+    #   → Pod nginx (HTTP)
+    #   → Service (HTTP)
+    #   → Traefik (encrypt)
+    #   → Client browser (HTTPS)
+    
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # WHAT: Tells cert-manager to automatically obtain TLS certificate
+    # ANNOTATION FOR: cert-manager (not Traefik)
+    # 
+    # "letsencrypt-prod": Name of ClusterIssuer resource (we'll create this)
+    # ClusterIssuer: Defines how to request certificates from Let's Encrypt
+    #
+    # WHAT HAPPENS:
+    # 1. cert-manager watches for Ingress resources
+    # 2. Sees this annotation → triggers certificate request
+    # 3. Uses "letsencrypt-prod" ClusterIssuer configuration
+    # 4. Contacts Let's Encrypt servers
+    # 5. Proves domain ownership (HTTP01 challenge)
+    # 6. Receives signed TLS certificate
+    # 7. Stores certificate in Kubernetes Secret
+    # 8. Traefik uses certificate for HTTPS
+    #
+    # CERTIFICATE LIFECYCLE:
+    # - Initial issuance: ~30-60 seconds
+    # - Valid for: 90 days
+    # - Auto-renewal: cert-manager renews at 60 days (30 days before expiry)
+    # - Renewal process: automatic, zero downtime
+    #
+    # WHY PRODUCTION (NOT STAGING)?
+    # - letsencrypt-staging: For testing (browser shows "invalid cert")
+    # - letsencrypt-prod: Real certificates (browser shows green lock)
+    # BEST PRACTICE: Test with staging first, then switch to prod
+    #
+    # RATE LIMITS:
+    # - Staging: 30,000 certs/week (very generous)
+    # - Production: 50 certs/week per domain (can hit limit if misconfigured)
+    # - Failed validations: 5 failures/hour (resets hourly)
+
+spec:
+  ingressClassName: traefik
+  # WHAT: Specifies which Ingress Controller should handle this Ingress
+  # KUBERNETES SUPPORTS MULTIPLE INGRESS CONTROLLERS:
+  # - traefik (we're using this)
+  # - nginx
+  # - haproxy
+  # - kong
+  # - ambassador
+  # 
+  # WHY THIS MATTERS:
+  # You can have multiple Ingress Controllers in one cluster
+  # Example:
+  #   - Traefik for web apps
+  #   - nginx for APIs
+  #   - Each handles only Ingresses with matching ingressClassName
+  #
+  # OLDER K8S VERSIONS (pre-1.18):
+  # Used annotation: kubernetes.io/ingress.class: traefik
+  # ingressClassName is the modern, preferred approach
+  #
+  # DEFAULT BEHAVIOR (if omitted):
+  # - Uses cluster's default Ingress Controller
+  # - Can cause conflicts if multiple controllers installed
+  # BEST PRACTICE: Always specify explicitly
+  
+  rules:
+  # RULES: Array of routing rules
+  # Each rule defines: host → service mapping
+  # Traefik evaluates rules in order until match found
+  
+  - host: weatherapp.codewithxjohn.com
+    # WHAT: Domain name to match
+    # MATCHES: Incoming HTTP request's "Host" header
+    # 
+    # DNS REQUIREMENT:
+    # Your DNS must point this domain to your VPS IP:
+    #   weatherapp.codewithxjohn.com  A  <your-vps-ip>
+    #
+    # HOW IT WORKS:
+    # 1. User types: https://weatherapp.codewithxjohn.com
+    # 2. Browser DNS lookup: weatherapp.codewithxjohn.com → 1.2.3.4
+    # 3. Browser connects to: 1.2.3.4:443
+    # 4. HTTPS request includes: Host: weatherapp.codewithxjohn.com
+    # 5. Traefik receives request
+    # 6. Traefik checks: Host header matches this rule? YES
+    # 7. Traefik routes to: weather-app Service
+    #
+    # WILDCARD SUPPORT:
+    # host: "*.codewithxjohn.com"  (matches any.codewithxjohn.com)
+    # host: ""  (matches all domains - catch-all)
+    
+    http:
+      # HTTP: Routing rules for this host
+      # Even though we use HTTPS, this section is called "http"
+      # (legacy naming from when Ingress only supported HTTP)
+      
+      paths:
+      # PATHS: Array of path-based routing rules
+      # Allows: same domain, different paths → different services
+      # Example:
+      #   /          → frontend service
+      #   /api       → backend service
+      #   /dashboard → admin service
+      
+      - path: /
+        # WHAT: URL path to match
+        # "/" = root path (matches all paths starting with /)
+        # 
+        # PATH MATCHING EXAMPLES:
+        #   Request: https://weatherapp.codewithxjohn.com/
+        #   Match: YES (exact match)
+        #
+        #   Request: https://weatherapp.codewithxjohn.com/weather
+        #   Match: YES (starts with /)
+        #
+        #   Request: https://weatherapp.codewithxjohn.com/assets/logo.png
+        #   Match: YES (starts with /)
+        #
+        # ALL REQUESTS to weatherapp.codewithxjohn.com go to weather-app service
+        
+        pathType: Prefix
+        # WHAT: How to interpret the path
+        # 
+        # OPTIONS:
+        # 1. Prefix (THIS ONE):
+        #    - Matches paths that START with specified path
+        #    - "/" matches everything
+        #    - "/api" matches /api, /api/users, /api/weather, etc.
+        #    - Most common for SPAs (single path serves entire app)
+        #
+        # 2. Exact:
+        #    - Matches ONLY exact path
+        #    - "/" matches ONLY /
+        #    - "/api" matches ONLY /api (not /api/users)
+        #    - Use case: Different services for different routes
+        #
+        # 3. ImplementationSpecific:
+        #    - Behavior depends on Ingress Controller
+        #    - Traefik-specific rules
+        #    - Rarely used
+        #
+        # WHY Prefix FOR SPA?
+        # React Router handles all paths client-side
+        # Ingress forwards ALL requests to same service
+        # nginx (inside pod) serves index.html for all paths
+        # React Router then renders correct component
+        
+        backend:
+          # BACKEND: Where to send matched requests
+          # Points to a Kubernetes Service
+          
+          service:
+            name: weather-app
+            # WHAT: Name of Service to route to
+            # MUST MATCH: service.yml metadata.name
+            # 
+            # KUBERNETES SERVICE DISCOVERY:
+            # 1. Traefik looks up Service "weather-app" in same namespace
+            # 2. Gets Service's ClusterIP (e.g., 10.96.10.50)
+            # 3. Gets Service's endpoints (healthy pod IPs)
+            # 4. Forwards request to Service IP
+            # 5. Service's iptables routes to random healthy pod
+            #
+            # CROSS-NAMESPACE ROUTING:
+            # If Service in different namespace, use:
+            #   name: weather-app.other-namespace
+            # Or in older K8s:
+            #   serviceName: weather-app
+            #   serviceNamespace: other-namespace
+            
+            port:
+              number: 8080
+              # WHAT: Port on the Service to connect to
+              # MUST MATCH: service.yml spec.ports[].port
+              #
+              # COMPLETE TRAFFIC FLOW:
+              # Browser:443 
+              #   → Traefik:443 (HTTPS) 
+              #   → Service:8080 (HTTP)
+              #   → Pod:8080 (HTTP)
+              #   → nginx:8080 (HTTP)
+              #
+              # PORT CHANGES THROUGH STACK:
+              # External: 443 (HTTPS standard port)
+              # Traefik → Service: 8080 (ClusterIP)
+              # Service → Pod: 8080 (targetPort)
+              # Pod nginx: 8080 (listen port)
+              #
+              # WHY NOT 80?
+              # - External: 443 is HTTPS standard (browsers expect it)
+              # - Internal: 8080 because non-root user (nginx-app)
+              #             can't bind to privileged ports (<1024)
+  
+  - host: www.weatherapp.codewithxjohn.com
+    # SECOND RULE: Handle www subdomain
+    # SAME CONFIGURATION as apex domain above
+    # 
+    # WHY SEPARATE RULE?
+    # - Some users type "www", others don't
+    # - Both should work!
+    # - Search engines treat them as different sites
+    # 
+    # ALTERNATIVES:
+    # 1. DNS CNAME: www → weatherapp (redirect at DNS level)
+    # 2. HTTP redirect: www → apex (redirect at HTTP level)
+    # 3. This approach: Serve same app on both (BEST for SEO)
+    #
+    # SEO IMPLICATIONS:
+    # Serving identical content on both domains is fine
+    # Set canonical URL in HTML: <link rel="canonical" href="https://weatherapp.codewithxjohn.com/">
+    # Tells search engines which is the "primary" domain
+    
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: weather-app
+            # SAME SERVICE: Both domains → same Service → same pods
+            # Users see same app regardless of www prefix
+            port:
+              number: 8080
+  
+  tls:
+  # TLS: Array of TLS configurations
+  # Defines which domains should use HTTPS and where to get certificates
+  
+  - hosts:
+    # HOSTS: List of domains to secure with this certificate
+    # Let's Encrypt can issue multi-domain certificates (SAN certificates)
+    # One cert can cover multiple domains
+    
+    - weatherapp.codewithxjohn.com
+    - www.weatherapp.codewithxjohn.com
+    # BOTH domains in ONE certificate
+    # 
+    # CERTIFICATE TYPE: SAN (Subject Alternative Name)
+    # Certificate covers:
+    #   - Primary: weatherapp.codewithxjohn.com
+    #   - SAN #1: www.weatherapp.codewithxjohn.com
+    #
+    # WHAT LET'S ENCRYPT DOES:
+    # 1. cert-manager requests cert for both domains
+    # 2. Let's Encrypt validates BOTH domains (HTTP01 challenge)
+    # 3. Issues single certificate covering both
+    # 4. Browser sees valid cert for whichever domain they visit
+    #
+    # VERIFICATION PROCESS (HTTP01):
+    # For weatherapp.codewithxjohn.com:
+    #   1. Let's Encrypt: "Prove you control this domain"
+    #   2. cert-manager creates temporary Ingress
+    #   3. Let's Encrypt requests: http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/TOKEN
+    #   4. cert-manager responds with challenge response
+    #   5. Let's Encrypt validates response
+    #   6. Repeat for www.weatherapp.codewithxjohn.com
+    #   7. Both pass → certificate issued
+    #
+    # CHALLENGES DURING VERIFICATION:
+    # - DNS must already point to cluster
+    # - Traefik must be running and accessible
+    # - Port 80 must be open (HTTP01 challenge uses HTTP, not HTTPS)
+    # - firewall rules must allow inbound 80 and 443
+    
+    secretName: weather-app-tls
+    # WHAT: Name of Kubernetes Secret to store certificate
+    # SECRET TYPE: kubernetes.io/tls
+    # 
+    # cert-manager AUTOMATICALLY:
+    # 1. Requests certificate from Let's Encrypt
+    # 2. Receives certificate and private key
+    # 3. Creates Kubernetes Secret with this name
+    # 4. Stores:
+    #    - tls.crt: Public certificate (safe to share)
+    #    - tls.key: Private key (KEEP SECRET!)
+    #    - ca.crt: Certificate Authority chain
+    #
+    # TRAEFIK AUTOMATICALLY:
+    # 1. Watches for Ingress with TLS section
+    # 2. Reads Secret "weather-app-tls"
+    # 3. Uses certificate for HTTPS handshakes
+    # 4. Updates when Secret changes (auto-renewal)
+    #
+    # SECRET CONTENTS (after cert issued):
+    # $ kubectl get secret weather-app-tls -o yaml
+    # data:
+    #   tls.crt: <base64-encoded-certificate>
+    #   tls.key: <base64-encoded-private-key>
+    #
+    # SECURITY:
+    # - Secret stored encrypted in etcd (K8s database)
+    # - Only accessible by pods in same namespace
+    # - Traefik has RBAC permissions to read TLS secrets
+    # - NEVER commit secrets to git!
+    # - NEVER share tls.key!
+    #
+    # CERTIFICATE RENEWAL:
+    # - cert-manager monitors expiry date
+    # - 30 days before expiry: requests renewal
+    # - Gets new certificate
+    # - Updates Secret "weather-app-tls"
+    # - Traefik auto-reloads
+    # - Zero downtime!
+    # - Users never see expired certificate
+
+# ============================================
+# HOW INGRESS WORKS - COMPLETE FLOW
+# ============================================
+#
+# INITIAL SETUP (one-time):
+# 1. Deploy Traefik Ingress Controller (DaemonSet/Deployment)
+# 2. Traefik gets external IP (your VPS public IP)
+# 3. Deploy cert-manager
+# 4. Create ClusterIssuer (letsencrypt-prod)
+# 5. Point DNS: weatherapp.codewithxjohn.com → VPS IP
+# 6. Apply this Ingress manifest
+#
+# CERTIFICATE ACQUISITION (first-time):
+# 1. kubectl apply -f ingress.yml
+# 2. cert-manager sees annotation: cert-manager.io/cluster-issuer
+# 3. cert-manager creates Certificate resource
+# 4. Certificate resource triggers ACME client
+# 5. ACME client contacts Let's Encrypt:
+#      "I want cert for weatherapp.codewithxjohn.com and www.weatherapp.codewithxjohn.com"
+# 6. Let's Encrypt responds with challenge:
+#      "PUT this token at http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/abc123"
+# 7. cert-manager creates temporary Ingress for challenge
+# 8. Let's Encrypt requests challenge URL
+# 9. cert-manager responds correctly
+# 10. Let's Encrypt validates challenge ✓
+# 11. Let's Encrypt issues certificate
+# 12. cert-manager stores cert in Secret "weather-app-tls"
+# 13. Traefik loads certificate
+# 14. Done! HTTPS now works
+#
+# RUNTIME REQUEST FLOW:
+# User types: https://weatherapp.codewithxjohn.com/weather
+#
+# 1. BROWSER DNS:
+#    Browser: "What's IP for weatherapp.codewithxjohn.com?"
+#    DNS: "1.2.3.4"
+#
+# 2. TCP CONNECTION:
+#    Browser → 1.2.3.4:443 (HTTPS port)
+#    SYN → SYN-ACK → ACK (TCP handshake)
+#
+# 3. TLS HANDSHAKE:
+#    Browser: "Client Hello" (supported ciphers, TLS version)
+#    Traefik: "Server Hello" + certificate (from weather-app-tls Secret)
+#    Browser: Validates certificate:
+#      - Issued by trusted CA (Let's Encrypt) ✓
+#      - Domain matches (weatherapp.codewithxjohn.com) ✓
+#      - Not expired ✓
+#      - Signature valid ✓
+#    Browser + Traefik: Exchange keys, establish encrypted session
+#
+# 4. HTTPS REQUEST:
+#    Browser → Traefik (encrypted):
+#      GET /weather HTTP/1.1
+#      Host: weatherapp.codewithxjohn.com
+#      [other headers...]
+#
+# 5. TRAEFIK PROCESSING:
+#    Traefik decrypts request
+#    Traefik checks Ingress rules:
+#      - Host: weatherapp.codewithxjohn.com ✓ (matches rule 1)
+#      - Path: /weather ✓ (matches "/" Prefix)
+#      - Backend: weather-app service, port 8080 ✓
+#
+# 6. SERVICE LOOKUP:
+#    Traefik → Kubernetes API: "Get Service 'weather-app' endpoints"
+#    K8s responds: [172.17.0.5:8080, 172.17.0.6:8080]
+#
+# 7. FORWARD TO SERVICE:
+#    Traefik → Service ClusterIP (10.96.10.50:8080)
+#      GET /weather HTTP/1.1
+#      Host: weatherapp.codewithxjohn.com
+#      X-Forwarded-For: <user-ip>
+#      X-Forwarded-Proto: https
+#      [Traefik adds headers indicating original request was HTTPS]
+#
+# 8. SERVICE LOAD BALANCING:
+#    iptables intercepts: 10.96.10.50:8080
+#    Random selection: 172.17.0.5:8080 (Pod #1)
+#    DNAT: destination → 172.17.0.5:8080
+#
+# 9. POD PROCESSING:
+#    Pod #1 receives request
+#    nginx processes (see nginx.conf):
+#      - try_files $uri $uri/ /index.html
+#      - /weather doesn't exist as file
+#      - Serves /index.html
+#      - Adds security headers
+#      - Gzip compression
+#
+# 10. RESPONSE PATH:
+#    nginx → Pod network → Service → Traefik
+#      HTTP 200 OK
+#      Content-Type: text/html
+#      Content-Encoding: gzip
+#      [HTML content]
+#
+# 11. TRAEFIK ENCRYPTION:
+#    Traefik encrypts response
+#    Traefik → Browser (HTTPS)
+#
+# 12. BROWSER RENDERING:
+#    Browser decrypts HTTPS
+#    Browser receives HTML
+#    Browser parses HTML
+#    Browser sees: <script src="/assets/main.xyz789.js">
+#    Browser requests: https://weatherapp.codewithxjohn.com/assets/main.xyz789.js
+#    [Repeat steps 1-11 for each asset]
+#    React app loads
+#    React Router sees path: /weather
+#    React renders Weather component
+#    User sees weather page!
+#
+# TOTAL TIME:
+# - First visit: ~500ms
+#   - TLS handshake: 100ms
+#   - Request/response: 50ms (including pod routing)
+#   - Asset downloads: 350ms (depends on file size)
+# - Subsequent visits: ~100ms
+#   - TLS session reused (no handshake)
+#   - Assets cached locally
+#   - Only index.html fetched
+#
+# ============================================
+# HTTP TO HTTPS REDIRECT
+# ============================================
+#
+# CURRENT BEHAVIOR:
+# - HTTP (port 80) requests accepted by "web" entrypoint
+# - Routed according to Ingress rules
+# - Served over HTTP (not secure!)
+#
+# TRAEFIK AUTO-REDIRECT (recommended):
+# Add to Traefik configuration (not this file):
+#   entryPoints:
+#     web:
+#       address: ":80"
+#       http:
+#         redirections:
+#           entryPoint:
+#             to: websecure
+#             scheme: https
+#
+# RESULT:
+# User types: http://weatherapp.codewithxjohn.com
+# Traefik responds: HTTP 301 Moved Permanently
+#                   Location: https://weatherapp.codewithxjohn.com
+# Browser automatically redirects to HTTPS
+#
+# WHY NOT IN INGRESS?
+# - Redirect is Traefik-level config (affects all Ingresses)
+# - Cleaner to configure once globally
+# - This Ingress focuses on routing, not redirects
+#
+# ============================================
+# TROUBLESHOOTING
+# ============================================
+#
+# CERTIFICATE NOT ISSUED:
+# $ kubectl describe certificate weather-app-tls
+# $ kubectl describe certificaterequest
+# $ kubectl logs -n cert-manager deploy/cert-manager
+# Common issues:
+#   - DNS not pointing to cluster
+#   - Port 80 blocked (firewall)
+#   - ClusterIssuer not created
+#   - Let's Encrypt rate limit exceeded
+#
+# INGRESS NOT ROUTING:
+# $ kubectl get ingress weather-app-ingress
+# $ kubectl describe ingress weather-app-ingress
+# $ kubectl logs -n traefik deploy/traefik
+# Common issues:
+#   - ingressClassName mismatch
+#   - Service name typo
+#   - Service port mismatch
+#   - Traefik not running
+#
+# TEST CONNECTIVITY:
+# From inside cluster:
+# $ kubectl run -it test --image=curlimages/curl --rm -- sh
+# $ curl http://weather-app:8080/
+# Should return HTML
+#
+# VERIFY DNS:
+# $ nslookup weatherapp.codewithxjohn.com
+# Should return your VPS IP
+#
+# VERIFY TLS:
+# $ curl -v https://weatherapp.codewithxjohn.com/
+# Should show valid certificate in output
+#
+# ============================================
+# ALTERNATIVE CONFIGURATIONS
+# ============================================
+#
+# PATH-BASED ROUTING (multiple services):
+# spec:
+#   rules:
+#   - host: weatherapp.codewithxjohn.com
+#     http:
+#       paths:
+#       - path: /
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: frontend-service
+#             port:
+#               number: 80
+#       - path: /api
+#         pathType: Prefix
+#         backend:
+#           service:
+#             name: backend-service
+#             port:
+#               number: 4000
+#
+# CUSTOM HEADERS (via annotation):
+# annotations:
+#   traefik.ingress.kubernetes.io/custom-response-headers: |
+#     Access-Control-Allow-Origin: *
+#     Strict-Transport-Security: max-age=31536000
+#
+# RATE LIMITING (via annotation):
+# annotations:
+#   traefik.ingress.kubernetes.io/rate-limit: |
+#     average: 100
+#     burst: 200
+#
+# BASIC AUTH (via annotation):
+# annotations:
+#   traefik.ingress.kubernetes.io/auth-type: basic
+#   traefik.ingress.kubernetes.io/auth-secret: auth-secret

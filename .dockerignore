@@ -1,0 +1,58 @@
+# Dependencies - we'll install these fresh in the container
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables - NEVER include in Docker images (security risk)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Git files - no need for version control inside containers
+.git
+.gitignore
+.gitattributes
+
+# IDE and editor files - developer tools, not needed in production
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Testing and coverage - not needed in production images
+coverage
+.nyc_output
+*.test.js
+*.spec.js
+
+# Documentation - reduces image size
+README.md
+CHANGELOG.md
+LICENSE
+*.md
+
+# CI/CD files - these are for GitHub Actions, not the container
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# Kubernetes manifests - deployment configs, not app code
+kubernetes
+
+# Docker files - no need to include Docker-related files inside the image
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Build output from local dev - we'll create fresh builds in container
+dist
+build
+.cache
+
+# OS-specific files
+.DS_Store
+Thumbs.db

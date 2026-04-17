@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { HiSearch, HiLocationMarker } from 'react-icons/hi';
 import './App.css';
 import { useStateContext } from './Context';
-import { BackgroundLayout, WeatherCard, MiniCard } from './components';
+import { WeatherCard, MiniCard } from './components';
 import axios from 'axios';
 
 function App() {
@@ -130,8 +130,6 @@ function App() {
 
     return (
         <div className="min-h-screen w-full bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 relative overflow-hidden">
-            <BackgroundLayout />
-
             {/* Decorative elements */}
             <div className="absolute top-0 left-0 w-96 h-96 bg-white/10 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2"></div>
             <div className="absolute bottom-0 right-0 w-96 h-96 bg-white/10 rounded-full blur-3xl translate-x-1/2 translate-y-1/2"></div>

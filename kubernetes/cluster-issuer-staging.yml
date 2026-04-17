@@ -1,0 +1,757 @@
+# ============================================
+# CERT-MANAGER CLUSTER ISSUER - STAGING
+# ============================================
+# ClusterIssuer for Let's Encrypt STAGING environment
+# Issues FAKE certificates for testing purposes
+#
+# STAGING vs PRODUCTION:
+#
+# STAGING (THIS FILE):
+#   Purpose: Testing and development
+#   Server: https://acme-staging-v02.api.letsencrypt.org/directory
+#   Certificates: FAKE (browser shows "Not secure" warning)
+#   Browser display: ⚠️ Red warning "Your connection is not private"
+#   Certificate issuer: "(STAGING) Let's Encrypt Authority X3"
+#   Rate limits: 30,000 certificates/week (essentially unlimited)
+#   Trust: NOT trusted by browsers
+#   Use case: Testing cert-manager setup, debugging challenges
+#
+# PRODUCTION (cluster-issuer-prod.yml):
+#   Purpose: Real websites with real users
+#   Server: https://acme-v02.api.letsencrypt.org/directory
+#   Certificates: REAL (browser shows green lock)
+#   Browser display: 🔒 "Connection is secure"
+#   Certificate issuer: "Let's Encrypt Authority X3"
+#   Rate limits: 50 certificates/week (strict!)
+#   Trust: Trusted by all browsers
+#   Use case: Production traffic
+#
+# WHY USE STAGING?
+# 1. TESTING:
+#    - First time setting up cert-manager
+#    - Testing new domain configurations
+#    - Verifying DNS records
+#    - Debugging Ingress routing
+#    - Validating ACME challenges work
+#
+# 2. RATE LIMIT PROTECTION:
+#    - Production: 50 certs/week limit
+#    - If misconfigured: Can hit limit and be BLOCKED for 1 week
+#    - Staging: 30,000 certs/week (600x more!)
+#    - Can test/debug without fear of hitting limits
+#
+# 3. LEARNING:
+#    - Safe environment to learn ACME protocol
+#    - Understand challenge flow
+#    - Practice troubleshooting
+#
+# 4. CI/CD PIPELINES:
+#    - Test deployment scripts
+#    - Validate Kubernetes manifests
+#    - Don't waste production rate limits on automated tests
+#
+# WHEN TO SWITCH TO PRODUCTION:
+# ✓ Certificate successfully issued via staging
+# ✓ No errors in cert-manager logs
+# ✓ kubectl get certificate shows READY=True
+# ✓ DNS correctly configured
+# ✓ All ACME challenges passing
+# → Then switch annotation to letsencrypt-prod
+
+apiVersion: cert-manager.io/v1
+# WHAT: cert-manager API version
+# Same as production ClusterIssuer
+# 
+# CONSISTENCY:
+# All cert-manager resources use same API version
+# - ClusterIssuer (this file)
+# - Certificate
+# - CertificateRequest
+# - Challenge
+# 
+# API EVOLUTION:
+# - v1alpha1: Early versions (deprecated)
+# - v1beta1: Stable beta (deprecated)
+# - v1: Current stable (use this!)
+
+kind: ClusterIssuer
+# WHAT: Resource type
+# ClusterIssuer: Cluster-wide certificate issuer
+# 
+# STAGING vs PROD:
+# Both are ClusterIssuers
+# Difference is in spec.acme.server URL
+# You can have MULTIPLE ClusterIssuers:
+#   - letsencrypt-staging (this file)
+#   - letsencrypt-prod (previous file)
+#   - venafi-enterprise
+#   - self-signed
+# 
+# USAGE:
+# Switch between them via Ingress annotation:
+#   cert-manager.io/cluster-issuer: letsencrypt-staging  ← Use this first
+#   cert-manager.io/cluster-issuer: letsencrypt-prod     ← Switch to this after testing
+
+metadata:
+  name: letsencrypt-staging
+  # WHAT: Unique name for this ClusterIssuer
+  # DIFFERENT FROM: letsencrypt-prod
+  # 
+  # NAMING CONVENTION:
+  # - letsencrypt-staging: This staging issuer
+  # - letsencrypt-prod: Production issuer
+  # 
+  # REFERENCED BY:
+  # Ingress annotation:
+  #   cert-manager.io/cluster-issuer: letsencrypt-staging
+  # 
+  # HOW TO USE:
+  # 1. Initial deployment:
+  #    annotations:
+  #      cert-manager.io/cluster-issuer: letsencrypt-staging
+  #    
+  # 2. After testing succeeds:
+  #    annotations:
+  #      cert-manager.io/cluster-issuer: letsencrypt-prod
+  #
+  # BOTH CAN COEXIST:
+  # $ kubectl get clusterissuer
+  # NAME                   READY   AGE
+  # letsencrypt-staging    True    10m
+  # letsencrypt-prod       True    5m
+  #
+  # Different apps can use different issuers simultaneously
+  # Example:
+  #   - Dev app: letsencrypt-staging
+  #   - Prod app: letsencrypt-prod
+
+spec:
+  acme:
+    # ACME: Automatic Certificate Management Environment
+    # Same protocol as production
+    # Only difference: staging server URL
+    
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    # WHAT: Let's Encrypt STAGING ACME server
+    # THIS IS THE KEY DIFFERENCE from production!
+    #
+    # STAGING SERVER:
+    #   URL: https://acme-staging-v02.api.letsencrypt.org/directory
+    #   Purpose: Testing environment
+    #   Certificates: Generate fake/untrusted certificates
+    #   Root CA: "(STAGING) Fake LE Root X1"
+    #   Intermediates: "(STAGING) Fake LE Intermediate X1"
+    #   Browser trust: NOT trusted (no root in browser store)
+    #   Rate limits: 30,000 certs/week per domain
+    #   Monitoring: No public CT logs (certificate transparency)
+    #
+    # PRODUCTION SERVER (for comparison):
+    #   URL: https://acme-v02.api.letsencrypt.org/directory
+    #   Purpose: Real certificates
+    #   Certificates: Trusted by all browsers
+    #   Root CA: "ISRG Root X1" (in all browser stores)
+    #   Intermediates: "R3" or "E1"
+    #   Browser trust: Full trust
+    #   Rate limits: 50 certs/week per domain
+    #   Monitoring: Public CT logs (crt.sh)
+    #
+    # WHAT BROWSERS SEE:
+    # Staging certificate:
+    #   Subject: weatherapp.codewithxjohn.com
+    #   Issuer: (STAGING) Fake LE Intermediate X1
+    #   Status: ⚠️ "Not secure"
+    #   Error: "NET::ERR_CERT_AUTHORITY_INVALID"
+    #   User experience: Big red warning page
+    #
+    # Production certificate:
+    #   Subject: weatherapp.codewithxjohn.com
+    #   Issuer: R3
+    #   Status: 🔒 "Secure"
+    #   User experience: Green lock, no warnings
+    #
+    # PROTOCOL COMPATIBILITY:
+    # Staging server implements IDENTICAL ACME protocol
+    # - Same API endpoints
+    # - Same challenge types (HTTP01, DNS01, TLS-ALPN-01)
+    # - Same validation logic
+    # - Same certificate format
+    # Only difference: Certificate is signed by fake CA
+    #
+    # TESTING WORKFLOW:
+    # 1. Use staging server first
+    # 2. Verify certificate issued (check kubectl get certificate)
+    # 3. Browser shows "Not secure" ← EXPECTED!
+    # 4. Inspect certificate: Should show "(STAGING)" in issuer
+    # 5. Check DNS, Ingress, challenges work correctly
+    # 6. Switch to production server
+    # 7. Browser shows "Secure" ← SUCCESS!
+    #
+    # CHECKING WHICH SERVER ISSUED CERT:
+    # $ echo | openssl s_client -connect weatherapp.codewithxjohn.com:443 2>/dev/null | openssl x509 -noout -issuer
+    # Staging: issuer=CN=(STAGING) Fake LE Intermediate X1
+    # Production: issuer=CN=R3
+    #
+    # RATE LIMIT DIFFERENCES:
+    # Staging: 30,000 certificates/week
+    #   - Can request 4,285 certs/day
+    #   - Can request 178 certs/hour
+    #   - Can request 3 certs/minute
+    #   - Essentially unlimited for testing
+    #
+    # Production: 50 certificates/week
+    #   - Can request ~7 certs/day
+    #   - Shared across all subdomains
+    #   - Easy to hit if misconfigured
+    #
+    # EXAMPLE HITTING PROD LIMIT:
+    # kubectl delete certificate weather-app-tls (accidentally in loop)
+    # kubectl apply -f ingress.yml (re-triggers cert request)
+    # Repeat 50 times = RATE LIMITED for 1 week!
+    #
+    # SAME MISTAKE WITH STAGING:
+    # Repeat 50 times = Still 29,950 requests available 😊
+    #
+    # API COMPATIBILITY:
+    # Both servers use same API version: ACME v2 (RFC 8555)
+    # Clients like cert-manager don't know the difference
+    # Just change URL, everything else identical
+    
+    email: xjohnfitcodes@gmail.com
+    # WHAT: Contact email for Let's Encrypt staging account
+    # SAME AS PRODUCTION
+    #
+    # STAGING vs PRODUCTION ACCOUNTS:
+    # - Different ACME servers = different accounts
+    # - Same email can be used for both
+    # - Each has separate account key (see privateKeySecretRef)
+    #
+    # ACCOUNT SEPARATION:
+    # Staging account:
+    #   - Server: acme-staging-v02.api.letsencrypt.org
+    #   - Email: xjohnfitcodes@gmail.com
+    #   - Account key: letsencrypt-staging secret
+    #   - Rate limits: Staging (30,000/week)
+    #   - Certificate log: Staging CT logs
+    #
+    # Production account:
+    #   - Server: acme-v02.api.letsencrypt.org
+    #   - Email: xjohnfitcodes@gmail.com (same email OK!)
+    #   - Account key: letsencrypt-prod secret (different key!)
+    #   - Rate limits: Production (50/week)
+    #   - Certificate log: Public CT logs (crt.sh)
+    #
+    # EMAIL NOTIFICATIONS (STAGING):
+    # Let's Encrypt STAGING sends fewer emails:
+    #   - Expiry warnings: YES (if auto-renewal fails)
+    #   - Rate limit notices: RARE (limits very high)
+    #   - Security notices: YES (if vulnerability found)
+    #
+    # BEST PRACTICE:
+    # Use same email for both staging and production
+    # Simplifies management
+    # Both environments send to same team inbox
+    
+    privateKeySecretRef:
+      # WHAT: Kubernetes Secret storing ACME account private key
+      # DIFFERENT FROM PRODUCTION!
+      # 
+      # WHY DIFFERENT SECRET?
+      # Staging account ≠ Production account
+      # Each ACME server requires separate account registration
+      # Each account has unique private key
+      # 
+      # SECRET NAMES:
+      # Staging: letsencrypt-staging (this file)
+      # Production: letsencrypt-prod (other file)
+      #
+      # ACCOUNT KEYS:
+      # Staging account key:
+      #   Location: Secret "letsencrypt-staging" in cert-manager namespace
+      #   Purpose: Authenticate to staging ACME server
+      #   Scope: Staging server only
+      #   Rate limits: Staging (30,000/week)
+      #
+      # Production account key:
+      #   Location: Secret "letsencrypt-prod" in cert-manager namespace
+      #   Purpose: Authenticate to production ACME server
+      #   Scope: Production server only
+      #   Rate limits: Production (50/week)
+      #
+      # INDEPENDENCE:
+      # - Can delete staging account without affecting production
+      # - Staging rate limits don't affect production limits
+      # - Each tracked separately by Let's Encrypt
+      
+      name: letsencrypt-staging
+      # WHAT: Secret name for staging ACME account key
+      # LOCATION: cert-manager namespace
+      # 
+      # AUTO-CREATION:
+      # First time ClusterIssuer used:
+      #   1. cert-manager checks: Does Secret exist?
+      #   2. Secret not found
+      #   3. cert-manager generates new RSA key (2048-bit)
+      #   4. Registers account with staging server
+      #   5. Stores account key in this Secret
+      #
+      # SUBSEQUENT USE:
+      # 1. cert-manager checks: Does Secret exist? YES
+      # 2. Loads existing account key
+      # 3. Uses existing account
+      # 4. Maintains rate limit counters
+      #
+      # INSPECT SECRET:
+      # $ kubectl get secret letsencrypt-staging -n cert-manager
+      # NAME                   TYPE     DATA   AGE
+      # letsencrypt-staging    Opaque   1      10m
+      #
+      # $ kubectl get secret letsencrypt-staging -n cert-manager -o yaml
+      # data:
+      #   tls.key: <base64-encoded-account-key>
+      #
+      # DECODE KEY (for backup):
+      # $ kubectl get secret letsencrypt-staging -n cert-manager -o jsonpath='{.data.tls\.key}' | base64 -d
+      # Shows PEM-encoded RSA private key
+      #
+      # BACKUP RECOMMENDATION:
+      # $ kubectl get secret letsencrypt-staging -n cert-manager -o yaml > letsencrypt-staging-backup.yaml
+      # Store securely
+      # Enables account recovery if cluster rebuilt
+      #
+      # RELATIONSHIP TO CERTIFICATE KEYS:
+      # ACME account key (this): Authenticates to Let's Encrypt
+      # Certificate private key (different): Used for TLS encryption
+      # 
+      # Example:
+      #   letsencrypt-staging secret: Account key for cert requests
+      #   weather-app-tls secret: Certificate key for HTTPS
+      #
+      # SECURITY:
+      # - NEVER commit to git
+      # - Protect with RBAC
+      # - Only cert-manager needs access
+      # - If compromised: Attacker can request certs for your domains
+    
+    solvers:
+    # SOLVERS: Domain validation methods
+    # IDENTICAL to production configuration
+    # Staging server supports same challenge types as production
+    
+    - http01:
+        # HTTP01: HTTP-based domain validation
+        # SAME process for both staging and production:
+        # 1. Let's Encrypt: "Prove you control domain"
+        # 2. cert-manager creates solver pod
+        # 3. Let's Encrypt requests: http://domain/.well-known/acme-challenge/TOKEN
+        # 4. solver pod responds with KEY_AUTH
+        # 5. Let's Encrypt validates response
+        # 6. Certificate issued
+        #
+        # ONLY DIFFERENCE:
+        # Staging: Issues fake certificate
+        # Production: Issues trusted certificate
+        #
+        # CHALLENGE VALIDATION:
+        # Both staging and production perform IDENTICAL validation
+        # If staging challenge succeeds → production challenge will succeed
+        # This is why staging is perfect for testing!
+        
+        ingress:
+          # INGRESS: Use Ingress for HTTP01 challenges
+          # SAME configuration as production
+          
+          class: traefik
+          # WHAT: Ingress Controller to use for challenges
+          # MUST MATCH: Your actual Ingress Controller
+          # 
+          # SAME AS PRODUCTION:
+          # Traefik handles challenges for both staging and production
+          # No difference in Ingress Controller behavior
+          # 
+          # CHALLENGE INGRESS:
+          # When staging certificate requested:
+          #   1. cert-manager creates temporary Ingress
+          #   2. Ingress uses: ingressClassName: traefik
+          #   3. Traefik routes /.well-known to solver pod
+          #   4. Let's Encrypt validates
+          #   5. Temporary Ingress deleted
+          #
+          # Same exact flow for production!
+          #
+          # TRAEFIK COMPATIBILITY:
+          # Traefik doesn't care if cert is staging or production
+          # Works identically with both:
+          #   - Routes HTTP01 challenges
+          #   - Terminates TLS
+          #   - Serves both fake and real certificates
+          #
+          # TESTING CHALLENGES:
+          # Staging challenges validate:
+          #   ✓ DNS correctly points to cluster
+          #   ✓ Port 80 accessible
+          #   ✓ Traefik routing works
+          #   ✓ Ingress class configuration correct
+          #   ✓ Firewall rules allow HTTP
+          #
+          # If staging challenges pass, production will too!
+
+# ============================================
+# TESTING WORKFLOW: STAGING → PRODUCTION
+# ============================================
+#
+# This is the recommended workflow for new deployments:
+#
+# PHASE 1: DEPLOY WITH STAGING
+# 
+# 1. Apply ClusterIssuers (both):
+#    $ kubectl apply -f kubernetes/cluster-issuer-staging.yml
+#    $ kubectl apply -f kubernetes/cluster-issuer-prod.yml
+#
+# 2. Verify ClusterIssuers ready:
+#    $ kubectl get clusterissuer
+#    NAME                   READY   AGE
+#    letsencrypt-staging    True    30s
+#    letsencrypt-prod       True    25s
+#
+# 3. Edit ingress.yml to use staging:
+#    annotations:
+#      cert-manager.io/cluster-issuer: letsencrypt-staging  ← Use staging first!
+#
+# 4. Apply Ingress:
+#    $ kubectl apply -f kubernetes/ingress.yml
+#
+# 5. Watch certificate creation:
+#    $ kubectl get certificate weather-app-tls -w
+#    
+#    Expected output:
+#    NAME              READY   SECRET            AGE
+#    weather-app-tls   False   weather-app-tls   5s
+#    weather-app-tls   False   weather-app-tls   10s  ← Requesting
+#    weather-app-tls   False   weather-app-tls   30s  ← Validating
+#    weather-app-tls   True    weather-app-tls   45s  ← SUCCESS!
+#
+# 6. Check certificate details:
+#    $ kubectl describe certificate weather-app-tls
+#    
+#    Events:
+#      Normal  Issuing    Certificate is being issued
+#      Normal  Generated  Generated new private key
+#      Normal  Requested  Created new CertificateRequest
+#      Normal  Issuing    The certificate has been successfully issued
+#
+# 7. Verify challenges passed:
+#    $ kubectl get challenge
+#    
+#    Should show empty (challenges auto-deleted after success)
+#    Or if still in progress:
+#    NAME                                STATE    AGE
+#    weather-app-tls-***-weatherapp      valid    1m
+#
+# 8. Inspect certificate:
+#    $ kubectl get secret weather-app-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -text
+#    
+#    Look for:
+#      Issuer: CN=(STAGING) Fake LE Intermediate X1  ← Confirms staging!
+#      Subject: CN=weatherapp.codewithxjohn.com
+#      Subject Alternative Name: DNS:weatherapp.codewithxjohn.com, DNS:www.weatherapp.codewithxjohn.com
+#      Validity: 90 days
+#
+# 9. Test in browser:
+#    Visit: https://weatherapp.codewithxjohn.com
+#    
+#    Expected: ⚠️ Big red warning page
+#    Message: "Your connection is not private"
+#    Details: "NET::ERR_CERT_AUTHORITY_INVALID"
+#    
+#    THIS IS EXPECTED! Staging certs are not trusted.
+#    
+#    Click "Advanced" → "Proceed to weatherapp.codewithxjohn.com (unsafe)"
+#    App should load and work normally
+#
+# 10. Verify certificate in browser:
+#     Click padlock → "Certificate is not valid"
+#     View certificate details:
+#       Issued by: (STAGING) Fake LE Intermediate X1  ← Confirms staging
+#       Valid for: weatherapp.codewithxjohn.com, www.weatherapp.codewithxjohn.com
+#
+# ✓ STAGING SUCCESS CRITERIA:
+#   - kubectl get certificate shows READY=True
+#   - No errors in cert-manager logs
+#   - Browser shows certificate (even if untrusted)
+#   - Certificate issuer contains "(STAGING)"
+#   - App loads after clicking "Proceed anyway"
+#
+# PHASE 2: SWITCH TO PRODUCTION
+#
+# 1. Edit ingress.yml to use production:
+#    annotations:
+#      cert-manager.io/cluster-issuer: letsencrypt-prod  ← Switch to prod!
+#
+# 2. Delete staging certificate and secret:
+#    $ kubectl delete certificate weather-app-tls
+#    $ kubectl delete secret weather-app-tls
+#    
+#    WHY? Force recreation with production issuer
+#
+# 3. Apply updated Ingress:
+#    $ kubectl apply -f kubernetes/ingress.yml
+#
+# 4. Watch new certificate creation:
+#    $ kubectl get certificate weather-app-tls -w
+#    
+#    NAME              READY   SECRET            AGE
+#    weather-app-tls   False   weather-app-tls   3s
+#    weather-app-tls   True    weather-app-tls   52s  ← Should be faster (DNS already cached)
+#
+# 5. Verify production certificate:
+#    $ kubectl get secret weather-app-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -text
+#    
+#    Look for:
+#      Issuer: CN=R3  ← Production issuer (not STAGING!)
+#      Subject: CN=weatherapp.codewithxjohn.com
+#
+# 6. Test in browser (INCOGNITO MODE):
+#    Visit: https://weatherapp.codewithxjohn.com
+#    
+#    Expected: 🔒 "Connection is secure"
+#    No warnings!
+#    Green padlock in address bar
+#    
+# 7. Verify certificate in browser:
+#    Click padlock → "Connection is secure"
+#    Certificate details:
+#      Issued by: R3 (or E1)  ← Production issuer
+#      Valid for: weatherapp.codewithxjohn.com, www.weatherapp.codewithxjohn.com
+#      Expires: ~90 days from now
+#      Trusted: ✓
+#
+# ✓ PRODUCTION SUCCESS CRITERIA:
+#   - No browser warnings
+#   - Green padlock visible
+#   - Certificate shows "R3" issuer (not STAGING)
+#   - Certificate trusted by browser
+#   - No "Proceed anyway" bypass needed
+#
+# ============================================
+# TROUBLESHOOTING STAGING
+# ============================================
+#
+# PROBLEM: Certificate not issuing (READY=False)
+#
+# 1. Check ClusterIssuer:
+#    $ kubectl get clusterissuer letsencrypt-staging
+#    NAME                   READY   AGE
+#    letsencrypt-staging    True    5m
+#    
+#    If READY=False:
+#    $ kubectl describe clusterissuer letsencrypt-staging
+#    Look for errors in Conditions
+#
+# 2. Check Certificate events:
+#    $ kubectl describe certificate weather-app-tls
+#    
+#    Look for errors in Events section:
+#      ✗ "Failed to create Order: rate limit exceeded" → Try again later (unlikely with staging!)
+#      ✗ "DNS name does not resolve" → Check DNS records
+#      ✗ "Incorrect TLS SNI" → Check Ingress host configuration
+#
+# 3. Check challenges:
+#    $ kubectl get challenge
+#    $ kubectl describe challenge <challenge-name>
+#    
+#    Common errors:
+#      "Connection refused" → Port 80 blocked
+#      "DNS resolution failed" → DNS not pointing to cluster
+#      "403 Forbidden" → Ingress routing misconfigured
+#      "Timeout" → Firewall blocking access
+#
+# 4. Check solver pods:
+#    $ kubectl get pods | grep cm-acme-http-solver
+#    
+#    Should see solver pods during challenge:
+#    cm-acme-http-solver-***   1/1   Running   0   30s
+#    
+#    If CrashLoopBackOff:
+#    $ kubectl logs cm-acme-http-solver-***
+#
+# 5. Check temporary Ingress:
+#    $ kubectl get ingress | grep cm-acme
+#    
+#    During challenge, should see:
+#    cm-acme-http-solver-***   traefik   weatherapp.codewithxjohn.com   <ip>   80   30s
+#    
+#    Verify:
+#    $ kubectl describe ingress cm-acme-http-solver-***
+#    Check ingressClassName: traefik
+#
+# 6. Test challenge endpoint manually:
+#    $ curl -v http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/test
+#    
+#    Should reach cluster (might 404, but shouldn't timeout)
+#
+# 7. Check cert-manager logs:
+#    $ kubectl logs -n cert-manager deploy/cert-manager
+#    
+#    Filter for errors:
+#    $ kubectl logs -n cert-manager deploy/cert-manager | grep -i error
+#
+# PROBLEM: Browser shows "Not secure" (for staging - EXPECTED!)
+#
+# This is NORMAL for staging certificates!
+# Staging certificates are NOT trusted by browsers.
+# 
+# If seeing this:
+# 1. Verify issuer is "(STAGING)" in certificate
+# 2. This confirms staging is working correctly
+# 3. Switch to production for trusted certificate
+#
+# PROBLEM: Browser shows "Not secure" (for production - NOT EXPECTED!)
+#
+# If using letsencrypt-prod and still seeing warning:
+# 1. Check certificate issuer in browser
+# 2. If shows "(STAGING)" → Didn't properly switch to production
+# 3. Delete certificate and secret, reapply
+# 4. Clear browser cache (or use incognito mode)
+#
+# ============================================
+# RATE LIMIT DETAILS
+# ============================================
+#
+# STAGING RATE LIMITS:
+# These limits are VERY generous for testing:
+#
+# 1. Certificates per domain:
+#    - Limit: 30,000 per week
+#    - Scope: Per registered domain (codewithxjohn.com)
+#    - Includes: All subdomains (weatherapp.codewithxjohn.com, www.weatherapp.codewithxjohn.com)
+#    - Reset: Rolling 7-day window
+#    - Practical impact: Never hit this limit during normal testing
+#
+# 2. Duplicate certificates:
+#    - Limit: 30,000 per week
+#    - Definition: Same set of domain names
+#    - Example: Deleting and recreating same cert counts toward limit
+#    - Practical impact: Negligible
+#
+# 3. Failed validations:
+#    - Limit: 60 per account per hour
+#    - Scope: Per account (email)
+#    - Reset: Rolling 1-hour window
+#    - Practical impact: Can fail ~1 validation per minute without blocking
+#
+# 4. Accounts per IP:
+#    - Limit: 500 per IP per 3 hours
+#    - Scope: Account registrations
+#    - Practical impact: Only matters if creating many accounts
+#
+# 5. Pending authorizations:
+#    - Limit: 300 per account
+#    - Scope: In-flight challenges
+#    - Practical impact: Don't request 300 certs simultaneously!
+#
+# STAGING vs PRODUCTION COMPARISON:
+#
+# | Limit Type              | Staging    | Production | Ratio  |
+# |------------------------|------------|------------|--------|
+# | Certs per domain/week  | 30,000     | 50         | 600x   |
+# | Duplicate certs        | 30,000     | 5          | 6000x  |
+# | Failed validations/hr  | 60         | 5          | 12x    |
+#
+# WHY SUCH HIGH STAGING LIMITS?
+# - Encourages testing before production
+# - Allows CI/CD pipelines to run freely
+# - Supports learning and experimentation
+# - Prevents accidental production limit exhaustion
+#
+# CHECKING YOUR STAGING USAGE:
+# Unfortunately, Let's Encrypt doesn't provide API to check staging usage
+# But with 30,000/week limit, you'd need to request:
+#   - 4,285 certs per day
+#   - 178 certs per hour
+#   - 3 certs per minute
+# ...to hit the limit!
+#
+# ============================================
+# BEST PRACTICES
+# ============================================
+#
+# 1. ALWAYS START WITH STAGING:
+#    ✓ Apply staging ClusterIssuer first
+#    ✓ Use letsencrypt-staging in Ingress
+#    ✓ Verify certificate issued successfully
+#    ✓ Then switch to production
+#
+# 2. KEEP BOTH CLUSTERISSUERS:
+#    ✓ Don't delete staging after switching to prod
+#    ✓ Useful for future testing
+#    ✓ Useful for new domains
+#    ✓ Useful for CI/CD environments
+#
+# 3. USE STAGING FOR:
+#    ✓ First-time cert-manager setup
+#    ✓ New domain configuration
+#    ✓ DNS changes
+#    ✓ Ingress troubleshooting
+#    ✓ Challenge debugging
+#    ✓ CI/CD pipeline testing
+#
+# 4. USE PRODUCTION FOR:
+#    ✓ Real user traffic
+#    ✓ After staging verification
+#    ✓ Public-facing websites
+#
+# 5. NEVER:
+#    ✗ Start with production (risk hitting rate limits)
+#    ✗ Delete production cert repeatedly (wastes rate limit)
+#    ✗ Mix staging and production in same Ingress
+#    ✗ Assume staging and production behave differently (they don't!)
+#
+# 6. MONITORING:
+#    ✓ Check certificate expiry dates
+#    ✓ Monitor cert-manager logs
+#    ✓ Alert on failed renewals
+#    ✓ Track certificate age
+#
+# ============================================
+# ADVANCED: CERTIFICATE COMPARISON
+# ============================================
+#
+# STAGING CERTIFICATE EXAMPLE:
+# Subject: CN=weatherapp.codewithxjohn.com
+# Issuer: CN=(STAGING) Fake LE Intermediate X1
+# Validity:
+#   Not Before: Jan 15 12:00:00 2024 GMT
+#   Not After:  Apr 15 12:00:00 2024 GMT (90 days)
+# Subject Alternative Names:
+#   DNS:weatherapp.codewithxjohn.com
+#   DNS:www.weatherapp.codewithxjohn.com
+# Key Usage: Digital Signature, Key Encipherment
+# Extended Key Usage: TLS Web Server Authentication
+# Authority Information Access:
+#   OCSP - URI:http://ocsp.stg-int-x1.letsencrypt.org
+#
+# PRODUCTION CERTIFICATE EXAMPLE:
+# Subject: CN=weatherapp.codewithxjohn.com
+# Issuer: CN=R3, O=Let's Encrypt, C=US
+# Validity:
+#   Not Before: Jan 15 12:00:00 2024 GMT
+#   Not After:  Apr 15 12:00:00 2024 GMT (90 days)
+# Subject Alternative Names:
+#   DNS:weatherapp.codewithxjohn.com
+#   DNS:www.weatherapp.codewithxjohn.com
+# Key Usage: Digital Signature, Key Encipherment
+# Extended Key Usage: TLS Web Server Authentication
+# Authority Information Access:
+#   OCSP - URI:http://r3.o.letsencrypt.org
+#
+# KEY DIFFERENCES:
+# - Issuer: "(STAGING) Fake" vs "R3"
+# - OCSP: Staging and production use different URLs
+# - Trust: Staging not in browser root store, production is
+# 
+# EVERYTHING ELSE IDENTICAL:
+# - 90-day validity
+# - RSA 2048-bit keys
+# - Same extensions
+# - Same Subject Alternative Names
+# - Same key usage

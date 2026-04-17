@@ -1,0 +1,734 @@
+# ============================================
+# CERT-MANAGER CLUSTER ISSUER - PRODUCTION
+# ============================================
+# ClusterIssuer configures cert-manager to obtain TLS certificates
+# from Let's Encrypt production servers
+#
+# WHAT IS CERT-MANAGER?
+# Kubernetes add-on that automates TLS certificate management:
+#   - Requests certificates from CAs (Let's Encrypt, Venafi, etc.)
+#   - Validates domain ownership (ACME challenges)
+#   - Stores certificates in Kubernetes Secrets
+#   - Auto-renews before expiry (zero downtime)
+#   - Works with any Ingress controller
+#
+# WHAT IS LET'S ENCRYPT?
+# Free, automated Certificate Authority (CA):
+#   - Issues trusted TLS certificates
+#   - Recognized by all browsers
+#   - 90-day validity (auto-renewed by cert-manager)
+#   - Rate limits: 50 certs/week per domain
+#   - Production URL: https://acme-v02.api.letsencrypt.org/directory
+#
+# WHY CLUSTERISSUER (NOT ISSUER)?
+# ClusterIssuer: Works across ALL namespaces
+# Issuer: Works in ONE namespace only
+# For small clusters: ClusterIssuer is simpler (one config for all apps)
+
+apiVersion: cert-manager.io/v1
+# WHAT: cert-manager API version
+# cert-manager.io/v1: Stable API (cert-manager 1.0+)
+# 
+# INSTALL CERT-MANAGER:
+# $ kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+# 
+# VERIFY INSTALLATION:
+# $ kubectl get pods -n cert-manager
+# NAME                                       READY   STATUS    RESTARTS   AGE
+# cert-manager-***                           1/1     Running   0          1m
+# cert-manager-cainjector-***                1/1     Running   0          1m
+# cert-manager-webhook-***                   1/1     Running   0          1m
+#
+# COMPONENTS:
+# - cert-manager: Main controller (watches for Certificate resources)
+# - cainjector: Injects CA data into webhooks/APIServices
+# - webhook: Validates cert-manager resources (quality checks)
+
+kind: ClusterIssuer
+# WHAT: Resource type
+# ClusterIssuer: Cluster-wide certificate issuer configuration
+# 
+# RELATED RESOURCES:
+# - ClusterIssuer (this): Configuration for obtaining certs
+# - Certificate: Request for specific certificate
+# - CertificateRequest: Low-level cert request (auto-created)
+# - Secret: Stores actual certificate + private key
+#
+# WORKFLOW:
+# 1. You create: Ingress with cert-manager annotation
+# 2. cert-manager creates: Certificate resource
+# 3. Certificate creates: CertificateRequest
+# 4. CertificateRequest uses: THIS ClusterIssuer
+# 5. ClusterIssuer contacts: Let's Encrypt
+# 6. Let's Encrypt issues: Certificate
+# 7. cert-manager stores: Certificate in Secret
+
+metadata:
+  name: letsencrypt-prod
+  # WHAT: Unique name for this ClusterIssuer
+  # REFERENCED BY: Ingress annotation
+  #   annotations:
+  #     cert-manager.io/cluster-issuer: letsencrypt-prod  ← THIS NAME
+  #
+  # NAMING CONVENTION:
+  # - letsencrypt-prod: Production certificates (browser shows green lock)
+  # - letsencrypt-staging: Testing certificates (browser shows "invalid")
+  #
+  # WHY "PROD" SUFFIX?
+  # You'll create both staging AND production ClusterIssuers
+  # staging: For testing (unlimited rate limits)
+  # prod: For real traffic (strict rate limits)
+  #
+  # BEST PRACTICE WORKFLOW:
+  # 1. Use letsencrypt-staging for initial testing
+  # 2. Verify DNS, Ingress, challenges work
+  # 3. Switch to letsencrypt-prod for production
+  # 4. Prevents hitting rate limits during debugging
+
+spec:
+  acme:
+    # ACME: Automatic Certificate Management Environment
+    # Protocol used by Let's Encrypt for automated cert issuance
+    # 
+    # ACME WORKFLOW:
+    # 1. Client (cert-manager): "I want cert for weatherapp.codewithxjohn.com"
+    # 2. Server (Let's Encrypt): "Prove you control that domain"
+    # 3. Client: Creates challenge response
+    # 4. Server: Validates challenge
+    # 5. Server: Issues signed certificate
+    # 6. Client: Stores certificate
+    #
+    # ACME RFC: https://datatracker.ietf.org/doc/html/rfc8555
+    
+    server: https://acme-v02.api.letsencrypt.org/directory
+    # WHAT: Let's Encrypt ACME server URL
+    # This is the "certificate factory" endpoint
+    #
+    # LET'S ENCRYPT ENVIRONMENTS:
+    # 
+    # PRODUCTION (THIS ONE):
+    #   URL: https://acme-v02.api.letsencrypt.org/directory
+    #   Certificates: REAL (trusted by browsers)
+    #   Browser display: Green lock 🔒 "Connection is secure"
+    #   Rate limits: 
+    #     - 50 certificates per registered domain per week
+    #     - 5 failed validations per account/hour
+    #     - 300 new orders per account per 3 hours
+    #   Renewal: Same limits (but cert object counts as "renewal", not new)
+    #   Use case: Production websites
+    #
+    # STAGING (separate file):
+    #   URL: https://acme-staging-v02.api.letsencrypt.org/directory
+    #   Certificates: FAKE (browser shows "Not secure")
+    #   Browser display: Red warning ⚠️ "Your connection is not private"
+    #   Rate limits: MUCH HIGHER (essentially unlimited for testing)
+    #   Use case: Development, testing, debugging
+    #
+    # WHEN TO USE STAGING:
+    # - First time setting up cert-manager
+    # - Testing new domains
+    # - Debugging Ingress configuration
+    # - Learning ACME challenges
+    # - CI/CD pipeline testing
+    #
+    # WHEN TO USE PRODUCTION:
+    # - After staging works successfully
+    # - Real website with real users
+    # - When you need trusted certificates
+    #
+    # RATE LIMIT EXAMPLE:
+    # If misconfigured, cert-manager might request 100 certs/hour
+    # staging: No problem, keeps working
+    # prod: Hit limit after 50, BLOCKED for 1 week!
+    #
+    # CHECKING RATE LIMITS:
+    # Visit: https://crt.sh/?q=codewithxjohn.com
+    # Shows all certificates issued for your domain
+    
+    email: xjohnfitcodes@gmail.com
+    # WHAT: Contact email for Let's Encrypt account
+    # REQUIRED: Yes (ACME spec requires email)
+    #
+    # USED FOR:
+    # 1. EXPIRY WARNINGS:
+    #    Let's Encrypt sends email ~20 days before expiry
+    #    (If auto-renewal fails for some reason)
+    #    Example: "Certificate for weatherapp.codewithxjohn.com expires in 20 days"
+    #
+    # 2. IMPORTANT NOTICES:
+    #    Security vulnerabilities affecting your certificates
+    #    Changes to Let's Encrypt policies
+    #    Revocation notices (if cert compromised)
+    #
+    # 3. RATE LIMIT NOTIFICATIONS:
+    #    If you hit rate limits (50 certs/week)
+    #    Helps debugging issuance problems
+    #
+    # PRIVACY:
+    # - Email stored in Let's Encrypt database
+    # - Not publicly visible
+    # - Not shared with third parties
+    # - Can be dummy email (but you'll miss important notices!)
+    #
+    # BEST PRACTICES:
+    # - Use distribution list: ops@company.com
+    # - Use monitoring email: alerts@company.com  
+    # - Don't use personal email (job changes = lost access)
+    # - Set up email filters (most emails are informational)
+    #
+    # WHAT IF EMAIL IS WRONG?
+    # - Certificates still issue fine
+    # - You won't get expiry warnings
+    # - You might miss security notices
+    # - Can update anytime (just edit this file and kubectl apply)
+    
+    privateKeySecretRef:
+      # WHAT: Where to store Let's Encrypt account private key
+      # This is YOUR account key (NOT the certificate key!)
+      #
+      # TWO DIFFERENT KEYS:
+      # 1. ACME ACCOUNT KEY (this):
+      #    - Identifies YOUR cert-manager to Let's Encrypt
+      #    - Like a username/password for API
+      #    - Stored in this Secret
+      #    - Persists across certificates
+      #    - Used for ALL certificates from this ClusterIssuer
+      #    - Example location: letsencrypt-prod secret (this file)
+      #
+      # 2. CERTIFICATE KEY (different):
+      #    - Private key for EACH certificate
+      #    - Used for TLS encryption
+      #    - Stored in per-certificate Secret
+      #    - Example location: weather-app-tls secret (ingress.yml)
+      #
+      # ANALOGY:
+      # ACME account key = Your Let's Encrypt account login
+      # Certificate key = Password for your website's HTTPS
+      
+      name: letsencrypt-prod
+      # WHAT: Name of Secret to store ACME account private key
+      # LOCATION: cert-manager namespace (usually "cert-manager")
+      # 
+      # SECRET AUTO-CREATION:
+      # If Secret doesn't exist:
+      #   1. cert-manager generates new account key
+      #   2. Registers account with Let's Encrypt
+      #   3. Stores key in this Secret
+      #   4. Future certificates use same account
+      #
+      # If Secret exists:
+      #   1. cert-manager loads existing account key
+      #   2. Uses existing Let's Encrypt account
+      #   3. Maintains account history, rate limits
+      #
+      # INSPECT SECRET:
+      # $ kubectl get secret letsencrypt-prod -n cert-manager -o yaml
+      # data:
+      #   tls.key: <base64-encoded-account-key>
+      #
+      # SECURITY IMPLICATIONS:
+      # - If lost: Can't revoke old certificates
+      # - If compromised: Attacker can request certs for your domains
+      # - If deleted: New account created (rate limits reset)
+      #
+      # BACKUP RECOMMENDATION:
+      # $ kubectl get secret letsencrypt-prod -n cert-manager -o yaml > letsencrypt-prod-backup.yaml
+      # Store securely (encrypted, access-controlled)
+      # Enables account recovery if cluster rebuilt
+      #
+      # NAMESPACE:
+      # Secret stored in cert-manager namespace (not default)
+      # Check with: kubectl get secret letsencrypt-prod -n cert-manager
+    
+    solvers:
+    # SOLVERS: Methods to prove domain ownership
+    # Let's Encrypt requires proof you control the domain
+    # before issuing certificate
+    #
+    # CHALLENGE TYPES:
+    # 1. HTTP01 (WE USE THIS):
+    #    - Let's Encrypt requests: http://domain/.well-known/acme-challenge/TOKEN
+    #    - cert-manager responds with computed value
+    #    - Requires HTTP (port 80) accessible
+    #    - Works with any HTTP server
+    #    - Simple, no DNS API needed
+    #
+    # 2. DNS01 (NOT USED HERE):
+    #    - Let's Encrypt checks DNS TXT record
+    #    - cert-manager creates: _acme-challenge.domain.com TXT "value"
+    #    - Requires DNS provider API access
+    #    - Works for wildcard certs (*.domain.com)
+    #    - Slower (DNS propagation delay)
+    #
+    # 3. TLS-ALPN-01 (RARELY USED):
+    #    - Specialized TLS handshake
+    #    - Requires TLS server on port 443
+    #    - Advanced use cases
+    #
+    # WHY HTTP01?
+    # ✓ Simple (no DNS API)
+    # ✓ Fast (immediate validation)
+    # ✓ Works with Traefik/nginx/any Ingress
+    # ✗ Requires port 80 open
+    # ✗ Can't do wildcard certs
+    # ✗ Requires public domain (not internal)
+    
+    - http01:
+        # HTTP01: HTTP challenge solver configuration
+        # This solver handles ALL domains using HTTP challenge
+        
+        ingress:
+          # INGRESS: Use Ingress resources for challenge
+          # cert-manager will temporarily create Ingress rules
+          # to respond to Let's Encrypt challenges
+          #
+          # WHAT HAPPENS DURING CHALLENGE:
+          # 1. You apply Ingress with cert-manager annotation
+          # 2. cert-manager requests cert from Let's Encrypt
+          # 3. Let's Encrypt responds: "Prove ownership of weatherapp.codewithxjohn.com"
+          # 4. cert-manager creates temporary Ingress:
+          #      host: weatherapp.codewithxjohn.com
+          #      path: /.well-known/acme-challenge/abc123xyz
+          #      backend: cert-manager-solver pod
+          # 5. Let's Encrypt requests: http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/abc123xyz
+          # 6. Request hits Traefik
+          # 7. Traefik routes to cert-manager-solver pod (temporary Ingress)
+          # 8. cert-manager-solver responds with challenge response
+          # 9. Let's Encrypt validates response ✓
+          # 10. cert-manager deletes temporary Ingress
+          # 11. Let's Encrypt issues certificate
+          # 12. cert-manager stores cert in Secret
+          #
+          # CHALLENGE FLOW IN DEPTH:
+          # Let's Encrypt: "PUT file at http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/TOKEN"
+          # cert-manager: Creates pod "cert-manager-solver-***"
+          # cert-manager: Creates temporary Ingress routing /.well-known to solver pod
+          # Let's Encrypt: GET http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/TOKEN
+          # Traefik: Receives request
+          # Traefik: Matches temporary Ingress
+          # Traefik: Routes to cert-manager-solver pod
+          # Solver pod: Responds with KEY_AUTH (computed value)
+          # Let's Encrypt: Validates KEY_AUTH = EXPECTED_VALUE ✓
+          # Let's Encrypt: Issues certificate
+          # cert-manager: Cleans up solver pod + temporary Ingress
+          #
+          # REQUIREMENTS:
+          # ✓ Traefik must be running
+          # ✓ DNS must point to cluster IP
+          # ✓ Port 80 must be open (HTTP)
+          # ✓ Firewall must allow inbound 80
+          # ✓ No HTTP → HTTPS redirect during challenge (Traefik handles this)
+          
+          class: traefik
+          # WHAT: Which Ingress Controller to use for challenges
+          # MUST MATCH: Your actual Ingress Controller
+          #
+          # INGRESS CLASSES:
+          # - traefik (WE USE THIS)
+          # - nginx
+          # - haproxy
+          # - kong
+          # - ambassador
+          #
+          # WHY THIS MATTERS:
+          # If you have multiple Ingress Controllers installed:
+          #   - Traefik Ingress Controller (for web apps)
+          #   - nginx Ingress Controller (for APIs)
+          # 
+          # cert-manager needs to know which one to use for challenges
+          # 
+          # MUST MATCH YOUR SETUP:
+          # Your ingress.yml has: ingressClassName: traefik
+          # This file must have: class: traefik
+          # If mismatch: Challenge Ingress won't be picked up by Traefik
+          # Result: Let's Encrypt can't reach challenge endpoint
+          # Outcome: Certificate issuance FAILS
+          #
+          # TROUBLESHOOTING MISMATCH:
+          # $ kubectl get ingress -A
+          # Look for Ingress named: cm-acme-http-solver-***
+          # $ kubectl describe ingress cm-acme-http-solver-***
+          # Check: ingressClassName matches your controller
+          #
+          # VERIFY INGRESS CONTROLLER:
+          # $ kubectl get ingressclass
+          # NAME      CONTROLLER                      
+          # traefik   traefik.io/ingress-controller
+          #
+          # DEFAULT INGRESS CLASS:
+          # If omitted, uses cluster default Ingress class
+          # Better to ALWAYS specify explicitly
+          # Avoids issues when adding more controllers
+          #
+          # ALTERNATIVE SYNTAX (older Kubernetes):
+          # Before ingressClassName existed, used annotation:
+          #   kubernetes.io/ingress.class: traefik
+          # Modern Kubernetes uses ingressClassName field
+          # But cert-manager still uses "class" here (for compatibility)
+
+# ============================================
+# COMPLETE CERTIFICATE ISSUANCE WORKFLOW
+# ============================================
+#
+# PREREQUISITES (one-time setup):
+# 1. Install cert-manager in cluster:
+#    $ kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+#
+# 2. Wait for cert-manager pods ready:
+#    $ kubectl get pods -n cert-manager
+#    All pods should show "Running"
+#
+# 3. Verify ClusterIssuer created:
+#    $ kubectl get clusterissuer
+#    NAME               READY   AGE
+#    letsencrypt-prod   True    1m
+#
+# 4. DNS configured:
+#    weatherapp.codewithxjohn.com → <vps-ip>
+#    www.weatherapp.codewithxjohn.com → <vps-ip>
+#
+# 5. Firewall rules:
+#    - Inbound port 80 (HTTP) ← REQUIRED for ACME challenge
+#    - Inbound port 443 (HTTPS)
+#
+# CERTIFICATE REQUEST (automatic):
+# User applies ingress.yml:
+# $ kubectl apply -f kubernetes/ingress.yml
+#
+# STEP-BY-STEP FLOW:
+#
+# 1. INGRESS CREATION:
+#    - Kubernetes creates Ingress resource
+#    - Ingress has annotation: cert-manager.io/cluster-issuer: letsencrypt-prod
+#
+# 2. CERT-MANAGER WATCHES:
+#    - cert-manager controller watches for Ingress resources
+#    - Detects annotation → triggers certificate request
+#
+# 3. CERTIFICATE RESOURCE:
+#    - cert-manager auto-creates Certificate resource:
+#      apiVersion: cert-manager.io/v1
+#      kind: Certificate
+#      metadata:
+#        name: weather-app-tls
+#      spec:
+#        secretName: weather-app-tls
+#        issuerRef:
+#          name: letsencrypt-prod
+#          kind: ClusterIssuer
+#        dnsNames:
+#        - weatherapp.codewithxjohn.com
+#        - www.weatherapp.codewithxjohn.com
+#
+# 4. CERTIFICATE REQUEST:
+#    - Certificate creates CertificateRequest
+#    - CertificateRequest references ClusterIssuer (THIS FILE!)
+#
+# 5. ACME CLIENT ACTIVATION:
+#    - ClusterIssuer config used
+#    - cert-manager ACME client contacts: https://acme-v02.api.letsencrypt.org/directory
+#    - Registers account (if first time) using email: xjohnfitcodes@gmail.com
+#    - Account key stored in Secret: letsencrypt-prod
+#
+# 6. AUTHORIZATION REQUEST:
+#    - cert-manager: "I want certificate for weatherapp.codewithxjohn.com and www.weatherapp.codewithxjohn.com"
+#    - Let's Encrypt: "Prove you control those domains"
+#    - Let's Encrypt sends challenges:
+#      Domain: weatherapp.codewithxjohn.com
+#      Challenge: http-01
+#      Token: abc123xyz789
+#      
+#      Domain: www.weatherapp.codewithxjohn.com
+#      Challenge: http-01
+#      Token: def456uvw012
+#
+# 7. CHALLENGE SETUP (for weatherapp.codewithxjohn.com):
+#    - cert-manager creates Challenge resource
+#    - Challenge creates solver Pod: cm-acme-http-solver-***
+#    - Challenge creates temporary Ingress:
+#        apiVersion: networking.k8s.io/v1
+#        kind: Ingress
+#        metadata:
+#          name: cm-acme-http-solver-***
+#        spec:
+#          ingressClassName: traefik  ← FROM class: traefik
+#          rules:
+#          - host: weatherapp.codewithxjohn.com
+#            http:
+#              paths:
+#              - path: /.well-known/acme-challenge/abc123xyz789
+#                pathType: Exact
+#                backend:
+#                  service:
+#                    name: cm-acme-http-solver-***
+#                    port:
+#                      number: 8089
+#
+# 8. TRAEFIK CONFIGURATION:
+#    - Traefik detects new Ingress
+#    - Configures route: /.well-known/acme-challenge/abc123xyz789 → solver pod
+#
+# 9. LET'S ENCRYPT VALIDATION:
+#    - Let's Encrypt requests: http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/abc123xyz789
+#    - DNS lookup: weatherapp.codewithxjohn.com → <vps-ip>
+#    - TCP connect: <vps-ip>:80
+#    - HTTP GET request
+#    - Traefik receives request
+#    - Traefik routes to solver pod (port 8089)
+#    - Solver pod responds with: abc123xyz789.KEY_AUTHORIZATION
+#    - Let's Encrypt validates KEY_AUTHORIZATION
+#    - Validation: SUCCESS ✓
+#
+# 10. REPEAT FOR www.weatherapp.codewithxjohn.com:
+#     - Same process for second domain
+#     - Let's Encrypt validates: SUCCESS ✓
+#
+# 11. CERTIFICATE ISSUANCE:
+#     - Both domains validated
+#     - Let's Encrypt generates certificate:
+#         Subject: weatherapp.codewithxjohn.com
+#         SANs: weatherapp.codewithxjohn.com, www.weatherapp.codewithxjohn.com
+#         Issuer: Let's Encrypt Authority X3
+#         Valid: 90 days
+#         Algorithm: RSA 2048-bit
+#
+# 12. CERTIFICATE STORAGE:
+#     - cert-manager receives certificate
+#     - cert-manager creates Secret: weather-app-tls
+#         apiVersion: v1
+#         kind: Secret
+#         type: kubernetes.io/tls
+#         metadata:
+#           name: weather-app-tls
+#         data:
+#           tls.crt: <base64-encoded-certificate>
+#           tls.key: <base64-encoded-private-key>
+#           ca.crt: <base64-encoded-ca-chain>
+#
+# 13. CLEANUP:
+#     - cert-manager deletes solver pod
+#     - cert-manager deletes temporary Ingress
+#     - Only weather-app-tls Secret remains
+#
+# 14. TRAEFIK CONFIGURATION:
+#     - Traefik watches Ingress weather-app-ingress
+#     - Sees tls.secretName: weather-app-tls
+#     - Loads certificate from Secret
+#     - Configures HTTPS with certificate
+#
+# 15. BROWSER ACCESS:
+#     - User visits: https://weatherapp.codewithxjohn.com
+#     - Browser performs TLS handshake
+#     - Traefik presents certificate
+#     - Browser validates:
+#         ✓ Issued by trusted CA (Let's Encrypt)
+#         ✓ Domain matches (weatherapp.codewithxjohn.com)
+#         ✓ Not expired
+#         ✓ Signature valid
+#     - Browser shows: 🔒 "Connection is secure"
+#
+# 16. AUTO-RENEWAL:
+#     - Certificate valid for 90 days
+#     - cert-manager checks expiry daily
+#     - At 60 days (30 days before expiry):
+#         - Repeats steps 5-13
+#         - Requests new certificate
+#         - Updates Secret: weather-app-tls
+#         - Traefik auto-reloads
+#         - Zero downtime!
+#     - Users never see expired certificate
+#
+# TOTAL TIME:
+# - Initial issuance: 30-90 seconds
+#   - ACME registration: 5 seconds
+#   - Challenge setup: 10 seconds  
+#   - Let's Encrypt validation: 10 seconds
+#   - Certificate signing: 5 seconds
+#   - Secret creation: 2 seconds
+# - Subsequent renewals: Similar (automated)
+
+# ============================================
+# TROUBLESHOOTING
+# ============================================
+#
+# CHECK CLUSTERISSUER STATUS:
+# $ kubectl get clusterissuer letsencrypt-prod
+# NAME               READY   AGE
+# letsencrypt-prod   True    5m
+#
+# If READY = False:
+# $ kubectl describe clusterissuer letsencrypt-prod
+# Look for error messages in Events
+#
+# Common issues:
+# - cert-manager not installed
+# - Invalid ACME server URL
+# - Email format invalid
+#
+# CHECK CERTIFICATE STATUS:
+# $ kubectl get certificate
+# NAME              READY   SECRET            AGE
+# weather-app-tls   True    weather-app-tls   2m
+#
+# If READY = False:
+# $ kubectl describe certificate weather-app-tls
+# Look for error in Status.Conditions
+#
+# CHECK CERTIFICATE EVENTS:
+# $ kubectl describe certificate weather-app-tls
+# Events:
+#   Normal   Issuing    Certificate is being issued
+#   Normal   Generated  Generated new private key
+#   Normal   Requested  Created new CertificateRequest
+#   Normal   Issued     Certificate issued successfully
+#
+# CHECK CHALLENGE STATUS:
+# $ kubectl get challenge
+# NAME                                    STATE     AGE
+# weather-app-tls-***-weatherapp          valid     1m
+# weather-app-tls-***-www-weatherapp      valid     1m
+#
+# If STATE = pending:
+# $ kubectl describe challenge weather-app-tls-***
+# Look for validation errors
+#
+# COMMON CHALLENGE FAILURES:
+# 1. DNS not pointing to cluster:
+#    $ nslookup weatherapp.codewithxjohn.com
+#    Should return VPS IP
+#
+# 2. Port 80 blocked:
+#    $ curl http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/test
+#    Should reach cluster (might 404, but shouldn't timeout)
+#
+# 3. Ingress class mismatch:
+#    $ kubectl get ingress cm-acme-http-solver-***
+#    Check ingressClassName matches Traefik
+#
+# 4. Traefik not running:
+#    $ kubectl get pods -n traefik
+#    Should show Running
+#
+# CHECK CERT-MANAGER LOGS:
+# $ kubectl logs -n cert-manager deploy/cert-manager
+# Look for errors related to ACME, challenges, or Let's Encrypt
+#
+# CHECK SECRET CREATED:
+# $ kubectl get secret weather-app-tls
+# NAME              TYPE                DATA   AGE
+# weather-app-tls   kubernetes.io/tls   3      2m
+#
+# INSPECT CERTIFICATE:
+# $ kubectl get secret weather-app-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -text -noout
+# Shows certificate details:
+#   - Subject
+#   - SANs (Subject Alternative Names)
+#   - Issuer
+#   - Validity dates
+#
+# TEST HTTPS:
+# $ curl -v https://weatherapp.codewithxjohn.com
+# Look for:
+#   - SSL certificate verify ok
+#   - Server certificate matches domain
+#
+# RATE LIMIT CHECK:
+# Visit: https://crt.sh/?q=codewithxjohn.com
+# Shows all certificates issued for your domain
+# If >50 in past week: You're rate limited!
+#
+# ============================================
+# SWITCHING FROM STAGING TO PRODUCTION
+# ============================================
+#
+# INITIAL TESTING (with staging):
+# 1. Create cluster-issuer-staging.yml (next step!)
+# 2. Use annotation: cert-manager.io/cluster-issuer: letsencrypt-staging
+# 3. Verify certificate issued (even if browser shows "invalid")
+# 4. Check all challenges pass
+# 5. Confirm DNS, Ingress, challenges working
+#
+# SWITCH TO PRODUCTION:
+# 1. Edit ingress.yml:
+#    OLD: cert-manager.io/cluster-issuer: letsencrypt-staging
+#    NEW: cert-manager.io/cluster-issuer: letsencrypt-prod
+#
+# 2. Delete old certificate:
+#    $ kubectl delete certificate weather-app-tls
+#    $ kubectl delete secret weather-app-tls
+#
+# 3. Apply updated Ingress:
+#    $ kubectl apply -f kubernetes/ingress.yml
+#
+# 4. Wait for new certificate:
+#    $ kubectl get certificate weather-app-tls -w
+#    Wait for READY = True (~60 seconds)
+#
+# 5. Verify browser:
+#    Visit: https://weatherapp.codewithxjohn.com
+#    Should show: 🔒 "Connection is secure" (green lock)
+#    No more "invalid certificate" warning!
+#
+# ============================================
+# SECURITY BEST PRACTICES
+# ============================================
+#
+# 1. BACKUP ACME ACCOUNT KEY:
+#    $ kubectl get secret letsencrypt-prod -n cert-manager -o yaml > backup.yaml
+#    Store encrypted, access-controlled
+#    Enables account recovery if cluster lost
+#
+# 2. MONITOR CERTIFICATE EXPIRY:
+#    Even with auto-renewal, monitor for failures:
+#    - Prometheus: cert_manager_certificate_expiration_timestamp_seconds
+#    - Alerts: <30 days until expiry
+#
+# 3. EMAIL NOTIFICATIONS:
+#    Let's Encrypt sends expiry warnings to: xjohnfitcodes@gmail.com
+#    Set up email forwarding to team distribution list
+#
+# 4. RATE LIMIT AWARENESS:
+#    - 50 certs/week per domain (production)
+#    - Use staging for testing
+#    - Don't delete/recreate certificates repeatedly
+#
+# 5. DOMAIN VALIDATION:
+#    - Keep port 80 open (HTTP01 challenge)
+#    - Don't block .well-known paths
+#    - Maintain DNS records
+#
+# 6. SECRET PROTECTION:
+#    - NEVER commit secrets to git
+#    - Use RBAC to limit secret access
+#    - Audit secret access logs
+#
+# ============================================
+# ADVANCED: DNS01 CHALLENGE (ALTERNATIVE)
+# ============================================
+#
+# IF YOU HAVE DNS API ACCESS:
+# Use DNS01 instead of HTTP01
+#
+# BENEFITS:
+# - No need to open port 80
+# - Supports wildcard certificates (*.domain.com)
+# - Works for internal domains
+#
+# EXAMPLE (CloudFlare DNS):
+# solvers:
+# - dns01:
+#     cloudflare:
+#       email: xjohnfitcodes@gmail.com
+#       apiTokenSecretRef:
+#         name: cloudflare-api-token
+#         key: api-token
+#
+# DRAWBACKS:
+# - Requires DNS provider API
+# - Slower (DNS propagation ~60 seconds)
+# - More complex setup
+#
+# FOR THIS PROJECT:
+# HTTP01 is simpler and sufficient
+# Your VPS has public IP and HTTP access
+# No need for DNS API complexity

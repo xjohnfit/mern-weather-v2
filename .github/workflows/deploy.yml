@@ -1,0 +1,1196 @@
+# ============================================
+# GITHUB ACTIONS CI/CD WORKFLOW
+# ============================================
+# Automated deployment pipeline for Weather App
+#
+# WORKFLOW OVERVIEW:
+# 1. Trigger: Push to 'main' branch
+# 2. Security: Trivy vulnerability scan
+# 3. Build: Docker multi-stage build
+# 4. Push: Docker Hub with SHA-based tags
+# 5. Deploy: Update Kubernetes deployment
+#
+# WHAT IS GITHUB ACTIONS?
+# - GitHub's built-in CI/CD platform
+# - Runs automated workflows on code events
+# - Free tier: 2,000 minutes/month for private repos
+# - Unlimited for public repos
+# - Runs on GitHub-hosted runners (Ubuntu, Windows, macOS)
+#
+# WHAT IS CI/CD?
+# CI (Continuous Integration):
+#   - Automatically test/build on every commit
+#   - Catch errors early
+#   - Maintain code quality
+#
+# CD (Continuous Deployment):
+#   - Automatically deploy to production
+#   - Fast iteration cycles
+#   - Reduce manual errors
+#
+# WORKFLOW FILE LOCATION:
+# Must be in: .github/workflows/<name>.yml
+# GitHub automatically detects and runs workflows here
+
+name: Deploy Weather App
+# WHAT: Workflow name (displayed in GitHub Actions UI)
+# VISIBLE: GitHub repository → Actions tab
+# BEST PRACTICE: Descriptive name indicating purpose
+
+on:
+  # TRIGGERS: When should this workflow run?
+  # GitHub Actions supports many event triggers
+  
+  push:
+    # TRIGGER: When code is pushed to repository
+    # Most common trigger for deployment workflows
+    
+    branches:
+      - main
+      # WHAT: Only run on pushes to 'main' branch
+      # ALTERNATIVES:
+      #   - main           (only main)
+      #   - develop        (only develop)
+      #   - 'release/*'    (any release branch)
+      #   - '**'           (all branches)
+      #
+      # WHY ONLY MAIN?
+      # - main = production branch
+      # - Feature branches shouldn't auto-deploy
+      # - Protects production from unfinished work
+      #
+      # WORKFLOW TRIGGERED BY:
+      # $ git push origin main
+      # or
+      # Merging pull request to main
+      #
+      # NOT TRIGGERED BY:
+      # $ git push origin feature-branch
+      # (different branch, not in triggers list)
+  
+  workflow_dispatch:
+    # TRIGGER: Manual workflow execution
+    # Adds "Run workflow" button in GitHub Actions UI
+    #
+    # USE CASES:
+    # - Manual deployment (without new commit)
+    # - Redeploy after Kubernetes changes
+    # - Force deployment for testing
+    #
+    # HOW TO USE:
+    # GitHub repo → Actions → Deploy Weather App → Run workflow
+    #
+    # WHY INCLUDE THIS?
+    # - Rollback: Manually trigger deploy of older commit
+    # - Emergency: Deploy hotfix immediately
+    # - Testing: Verify workflow without new commit
+
+# ============================================
+# ENVIRONMENT VARIABLES (GLOBAL)
+# ============================================
+# These variables are available to all jobs and steps
+
+env:
+  DOCKER_USERNAME: xjohnfit
+  # WHAT: Docker Hub username
+  # USED FOR: docker login, image naming
+  # IMAGE NAME: xjohnfit/weather-app
+  #
+  # DOCKER HUB:
+  # - Container registry (like npm for Docker images)
+  # - Free tier: Unlimited public repos
+  # - Alternative: GitHub Container Registry (ghcr.io)
+  #
+  # WHY DOCKER HUB?
+  # ✓ Free for public images
+  # ✓ Fast image pulls
+  # ✓ Wide adoption
+  # ✓ Integrates with Kubernetes
+  
+  DOCKER_IMAGE: xjohnfit/weather-app
+  # WHAT: Full Docker image name
+  # FORMAT: <username>/<repository>
+  # TAGS: Added later (latest, main-abc1234)
+  #
+  # COMPLETE IMAGE REFERENCES:
+  # - xjohnfit/weather-app:latest
+  # - xjohnfit/weather-app:main-abc1234
+  #
+  # KUBERNETES USES THIS:
+  # deployment.yml → image: xjohnfit/weather-app:latest
+  # kubectl set image → xjohnfit/weather-app:main-abc1234
+  
+  DEPLOYMENT_NAME: weather-app
+  # WHAT: Kubernetes Deployment resource name
+  # MUST MATCH: kubernetes/deployment.yml metadata.name
+  #
+  # USED FOR: kubectl set image deployment/<name>
+  # MUST BE EXACT: Typo = deployment fails
+  
+  CONTAINER_NAME: weather-app
+  # WHAT: Container name INSIDE Deployment
+  # MUST MATCH: kubernetes/deployment.yml spec.template.spec.containers[].name
+  #
+  # WHY NEEDED?
+  # kubectl set image requires: deployment/<deployment-name> <container-name>=<new-image>
+  # Example: kubectl set image deployment/weather-app weather-app=xjohnfit/weather-app:main-abc1234
+  #
+  # DEPLOYMENT WITH MULTIPLE CONTAINERS:
+  # If deployment had multiple containers:
+  #   containers:
+  #   - name: frontend    ← CONTAINER_NAME: frontend
+  #   - name: sidecar
+  # kubectl set image would update only 'frontend' container
+  #
+  # OUR CASE:
+  # Single container per pod → deployment name = container name (simple!)
+  
+  KUBE_NAMESPACE: default
+  # WHAT: Kubernetes namespace for deployment
+  # DEFAULT: "default" namespace
+  #
+  # KUBERNETES NAMESPACES:
+  # Logical separation of resources:
+  #   - default: Default namespace
+  #   - kube-system: Kubernetes system components
+  #   - custom: Your own namespaces (dev, staging, prod)
+  #
+  # ALTERNATIVES:
+  #   KUBE_NAMESPACE: production
+  #   KUBE_NAMESPACE: weather-app
+  #
+  # MULTI-ENVIRONMENT SETUP:
+  # Use different namespaces for environments:
+  #   - dev namespace: Fast iterations, unstable
+  #   - staging namespace: Pre-production testing
+  #   - production namespace: Real users
+  #
+  # OUR SETUP:
+  # Single environment (production) in default namespace
+  # Simpler for small projects
+
+# ============================================
+# JOBS: UNITS OF WORK
+# ============================================
+# Workflows contain one or more jobs
+# Jobs run in parallel by default (unless dependencies specified)
+
+jobs:
+  # ============================================
+  # JOB 1: SECURITY SCANNING
+  # ============================================
+  # Scan Docker image for security vulnerabilities BEFORE deploying
+  
+  trivy-scan:
+    # JOB NAME: Used in GitHub Actions UI and logs
+    
+    runs-on: ubuntu-latest
+    # WHAT: Which machine to run job on
+    # OPTIONS:
+    #   - ubuntu-latest (most common, we use this)
+    #   - ubuntu-22.04 (specific version)
+    #   - ubuntu-20.04
+    #   - windows-latest
+    #   - macos-latest
+    #
+    # GITHUB-HOSTED RUNNERS:
+    # - Free for public repos
+    # - Pre-installed software: Docker, Node.js, Python, etc.
+    # - 2-core CPU, 7 GB RAM, 14 GB SSD
+    # - Fresh VM for each job
+    #
+    # WHY UBUNTU?
+    # ✓ Docker pre-installed
+    # ✓ Fast startup (~5 seconds)
+    # ✓ Large package ecosystem
+    # ✓ Most common in CI/CD
+    
+    steps:
+      # STEPS: Sequential tasks within a job
+      # Run in order, share filesystem
+      
+      - name: Checkout code
+        # STEP NAME: Descriptive label for logs
+        
+        uses: actions/checkout@v4
+        # WHAT: Official GitHub Action to clone repository
+        # VERSION: v4 (latest stable)
+        #
+        # WHAT IT DOES:
+        # 1. Clones your repository
+        # 2. Checks out the commit that triggered workflow
+        # 3. Makes code available to subsequent steps
+        #
+        # WORKING DIRECTORY AFTER:
+        # /home/runner/work/mern-weather-v2/mern-weather-v2/
+        # Contains: All repository files
+        #
+        # WHY NEEDED?
+        # - Docker build needs Dockerfile
+        # - Trivy scans the built image
+        # - kubectl needs Kubernetes manifests
+        #
+        # ALWAYS FIRST STEP in workflows that need code
+      
+      - name: Build Docker image for scanning
+        # BUILD: Create Docker image (not pushed, just for scanning)
+        # Same build as production, but only for vulnerability detection
+        
+        run: |
+          docker build \
+            --build-arg VITE_API_KEY=${{ secrets.VITE_API_KEY }} \
+            --build-arg VITE_OPENWEATHER_API_KEY=${{ secrets.VITE_OPENWEATHER_API_KEY }} \
+            -t ${{ env.DOCKER_IMAGE }}:scan \
+            .
+        # COMMAND BREAKDOWN:
+        #
+        # docker build \
+        #   Build Docker image from Dockerfile
+        #
+        # --build-arg VITE_API_KEY=${{ secrets.VITE_API_KEY }} \
+        #   Pass environment variable to build process
+        #   secrets.VITE_API_KEY: GitHub repository secret
+        #   ARG in Dockerfile: ARG VITE_API_KEY
+        #   Used during npm run build to embed in static files
+        #
+        # --build-arg VITE_OPENWEATHER_API_KEY=${{ secrets.VITE_OPENWEATHER_API_KEY }} \
+        #   Second API key for OpenWeather
+        #   Same pattern as above
+        #
+        # -t ${{ env.DOCKER_IMAGE }}:scan \
+        #   Tag image: xjohnfit/weather-app:scan
+        #   env.DOCKER_IMAGE: From global env (xjohnfit/weather-app)
+        #   :scan: Temporary tag for scanning (not pushed to registry)
+        #
+        # .
+        #   Build context: Current directory (repository root)
+        #   Docker sends all files (minus .dockerignore) to build daemon
+        #
+        # GITHUB SECRETS:
+        # Set in: Repository → Settings → Secrets and variables → Actions
+        # Secret names:
+        #   - VITE_API_KEY: Your RapidAPI key
+        #   - VITE_OPENWEATHER_API_KEY: Your OpenWeather key
+        #
+        # HOW TO ADD SECRETS:
+        # 1. GitHub repo → Settings
+        # 2. Secrets and variables → Actions
+        # 3. New repository secret
+        # 4. Name: VITE_API_KEY
+        # 5. Value: <paste-your-actual-api-key>
+        # 6. Add secret
+        # 7. Repeat for VITE_OPENWEATHER_API_KEY
+        #
+        # SECRETS IN LOGS:
+        # GitHub automatically redacts secret values from logs
+        # Displays: ${{ secrets.VITE_API_KEY }} → ***
+        # Security: Prevents accidental exposure
+        #
+        # BUILD PROCESS (from Dockerfile):
+        # 1. Stage 1: node:20-alpine
+        #    - npm ci (install dependencies)
+        #    - npm run build (compile React app)
+        #    - Build args converted to env vars
+        #    - Vite embeds env vars in static files
+        # 2. Stage 2: nginx:alpine
+        #    - Copy built files from stage 1
+        #    - Configure nginx
+        #    - Set up non-root user
+        # 3. Result: ~44MB production-ready image
+        #
+        # IMAGE NOT PUSHED:
+        # This is just for scanning
+        # Actual deployable image built in next job
+      
+      - name: Run Trivy vulnerability scanner
+        # SECURITY SCAN: Check image for known vulnerabilities
+        
+        uses: aquasecurity/trivy-action@master
+        # WHAT: Aqua Security's official Trivy GitHub Action
+        # TRIVY: Open-source vulnerability scanner
+        #
+        # WHAT TRIVY SCANS:
+        # - OS packages (Alpine Linux packages)
+        # - Application dependencies (npm packages)
+        # - Known CVEs (Common Vulnerabilities and Exposures)
+        # - Misconfigurations
+        # - Secrets in image layers
+        #
+        # SEVERITY LEVELS:
+        # - CRITICAL: Immediate fix required
+        # - HIGH: Fix soon
+        # - MEDIUM: Fix when possible
+        # - LOW: Optional
+        # - UNKNOWN: Unknown severity
+        #
+        # CVE DATABASE:
+        # Trivy uses databases from:
+        #   - NVD (National Vulnerability Database)
+        #   - Red Hat Security Data
+        #   - Debian Security Tracker
+        #   - Alpine Security Database
+        #   - npm Advisory Database
+        
+        with:
+          # ACTION PARAMETERS: Configuration for Trivy action
+          
+          image-ref: ${{ env.DOCKER_IMAGE }}:scan
+          # WHAT: Which Docker image to scan
+          # REFERS TO: Image built in previous step
+          # TAG: :scan (temporary, local only)
+          #
+          # TRIVY PROCESS:
+          # 1. Loads image: xjohnfit/weather-app:scan
+          # 2. Extracts all layers
+          # 3. Scans OS packages (Alpine apk packages)
+          # 4. Scans application files (node_modules)
+          # 5. Matches against CVE database
+          # 6. Generates report
+          
+          format: 'table'
+          # OUTPUT FORMAT: How to display results
+          # OPTIONS:
+          #   - table: Human-readable table (default)
+          #   - json: Machine-readable JSON
+          #   - sarif: Security Analysis Results Interchange Format
+          #
+          # TABLE FORMAT EXAMPLE:
+          # nginx:alpine (alpine 3.18.0)
+          # ===========================
+          # Total: 5 (CRITICAL: 1, HIGH: 2, MEDIUM: 2, LOW: 0)
+          #
+          # ┌────────────┬─────────────┬──────────┬──────────┐
+          # │  Library   │ Vulner ID   │ Severity │  Status  │
+          # ├────────────┼─────────────┼──────────┼──────────┤
+          # │ openssl    │ CVE-2023-1  │ CRITICAL │ affected │
+          # │ curl       │ CVE-2023-2  │ HIGH     │ fixed    │
+          # └────────────┴─────────────┴──────────┴──────────┘
+          
+          exit-code: '0'
+          # WHAT: Exit code if vulnerabilities found
+          # OPTIONS:
+          #   - '0': Continue even if vulnerabilities found
+          #   - '1': Fail workflow if vulnerabilities found
+          #
+          # CURRENT SETTING: '0' (don't fail)
+          # WHY?
+          # - Some CVEs have no fix available
+          # - Alerts us without blocking deployment
+          # - Can track vulnerabilities over time
+          #
+          # PRODUCTION RECOMMENDATION:
+          # exit-code: '1' (fail on vulnerabilities)
+          # Prevents deploying insecure images
+          # BUT: Requires fixing all HIGH/CRITICAL CVEs
+          #
+          # CONDITIONAL FAILING:
+          # Use with: severity: 'CRITICAL,HIGH'
+          # exit-code: '1'
+          # Only fails on CRITICAL or HIGH (not MEDIUM/LOW)
+          
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          # WHAT: Which severity levels to report
+          # REPORTS: CRITICAL, HIGH, and MEDIUM (not LOW)
+          #
+          # WHY EXCLUDE LOW?
+          # - Too many noise vulnerabilities
+          # - Often no fix available
+          # - Low impact on security
+          #
+          # FOCUS ON:
+          # - CRITICAL: Immediate action required
+          # - HIGH: Fix in next release
+          # - MEDIUM: Fix eventually
+          #
+          # ADJUSTING SENSITIVITY:
+          # Strict: severity: 'CRITICAL'
+          # Balanced: severity: 'CRITICAL,HIGH' (recommended)
+          # Verbose: severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+    
+    # TRIVY SCAN RESULTS:
+    # View in: GitHub Actions → Workflow run → trivy-scan job
+    #
+    # EXAMPLE OUTPUT:
+    # ✓ No vulnerabilities found
+    # or
+    # ⚠️ 3 vulnerabilities found (1 CRITICAL, 2 HIGH)
+    #
+    # WHAT TO DO IF VULNERABILITIES FOUND:
+    # 1. Read CVE details (click links in output)
+    # 2. Check if fix available:
+    #    - Update base image: nginx:alpine → nginx:1.25-alpine
+    #    - Update npm packages: npm update
+    #    - Wait for upstream fix
+    # 3. If no fix: Accept risk or find alternative
+    # 4. Document decision in security policy
+    #
+    # TRIVY IN PRODUCTION:
+    # - Scan images BEFORE deployment
+    # - Block deployments with CRITICAL CVEs
+    # - Regular scans (weekly cron job)
+    # - Track vulnerability trends
+  
+  # ============================================
+  # JOB 2: BUILD AND DEPLOY
+  # ============================================
+  # Build production image and deploy to Kubernetes
+  
+  build-and-deploy:
+    # JOB NAME: Combined build + deploy for simplicity
+    
+    runs-on: ubuntu-latest
+    # Same runner as trivy-scan job
+    # Jobs run in parallel (separate VMs)
+    
+    needs: trivy-scan
+    # DEPENDENCY: Wait for trivy-scan to complete BEFORE running this job
+    # WHY?
+    # - Security: Don't deploy if scan fails
+    # - Efficiency: No point building if vulnerabilities detected
+    #
+    # EXECUTION ORDER:
+    # 1. trivy-scan runs first
+    # 2. If trivy-scan succeeds → build-and-deploy runs
+    # 3. If trivy-scan fails → build-and-deploy skipped
+    #
+    # WITHOUT needs:
+    # Jobs run in parallel (both start simultaneously)
+    # Risk: Deploy vulnerable image
+    #
+    # MULTIPLE DEPENDENCIES:
+    # needs: [trivy-scan, unit-tests, integration-tests]
+    # Waits for ALL dependencies to succeed
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        # Same as trivy-scan job
+        # Fresh VM = need to checkout code again
+      
+      - name: Set up Docker Buildx
+        # BUILDX: Enhanced Docker build capabilities
+        
+        uses: docker/setup-buildx-action@v3
+        # WHAT: Docker Buildx installer
+        # BUILDX FEATURES:
+        # - Multi-platform builds (amd64, arm64)
+        # - Build caching (faster subsequent builds)
+        # - Advanced Dockerfile syntax
+        # - Parallel build stages
+        #
+        # WHY NEEDED?
+        # docker/build-push-action (next job step) requires Buildx
+        #
+        # CACHING:
+        # Buildx caches Docker layers
+        # Example:
+        #   First build: 180 seconds
+        #   Second build (no changes): 10 seconds
+        #   Second build (package.json changed): 60 seconds
+        #
+        # CACHE LOCATIONS:
+        # - GitHub Actions cache (automatic)
+        # - Registry cache (type=registry)
+        # - Local cache (type=local)
+      
+      - name: Log in to Docker Hub
+        # AUTHENTICATION: Required to push images
+        
+        uses: docker/login-action@v3
+        # WHAT: Official Docker login action
+        # AUTHENTICATES: GitHub Actions → Docker Hub
+        
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          # FROM: Global env (xjohnfit)
+          
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          # FROM: GitHub repository secret
+          # MUST CREATE: Repository → Settings → Secrets → DOCKER_PASSWORD
+          #
+          # HOW TO GET DOCKER PASSWORD:
+          # Option 1: Docker Hub password (NOT RECOMMENDED)
+          #   - Use account password
+          #   - Security risk if leaked
+          #
+          # Option 2: Docker Hub Access Token (RECOMMENDED)
+          #   1. Docker Hub → Account Settings
+          #   2. Security → New Access Token
+          #   3. Description: "GitHub Actions"
+          #   4. Permissions: Read, Write, Delete
+          #   5. Generate token
+          #   6. Copy token (shown only once!)
+          #   7. GitHub → Settings → Secrets → New secret
+          #   8. Name: DOCKER_PASSWORD
+          #   9. Value: <paste-token>
+          #
+          # TOKEN BENEFITS:
+          # ✓ Can revoke without changing account password
+          # ✓ Limited permissions (read/write, not account admin)
+          # ✓ One token per use case (GitHub, CI/CD, local)
+          # ✓ Audit trail (see where token used)
+          #
+          # AUTHENTICATION SCOPE:
+          # Applies to all docker commands in subsequent steps:
+          #   - docker push (upload images)
+          #   - docker pull (download images)
+          #   - docker manifest (inspect images)
+        
+        # SECURITY NOTE:
+        # Login credentials cached for duration of job
+        # Automatically logged out when job finishes
+        # Each job gets fresh VM (no credential leakage between jobs)
+      
+      - name: Extract metadata (tags, labels) for Docker
+        # METADATA: Generate image tags and labels
+        
+        id: meta
+        # STEP ID: Reference output in later steps
+        # USAGE: ${{ steps.meta.outputs.tags }}
+        
+        uses: docker/metadata-action@v5
+        # WHAT: Docker metadata extraction action
+        # GENERATES:
+        # - Image tags (latest, SHA-based, branch-based)
+        # - OCI labels (org.opencontainers.image.*)
+        # - Build arguments
+        #
+        # WHY USE THIS?
+        # - Consistent tagging strategy
+        # - Automatic SHA extraction
+        # - Proper semantic versioning
+        # - OCI-compliant labels
+        
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          # BASE IMAGE NAME: xjohnfit/weather-app
+          # Action adds tags: xjohnfit/weather-app:latest, etc.
+          
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=main-
+          # TAGGING STRATEGY:
+          #
+          # 1. type=raw,value=latest
+          #    CREATES: xjohnfit/weather-app:latest
+          #    WHEN: Every build
+          #    PURPOSE: Always points to newest version
+          #    USAGE: Quick testing, development
+          #    RISK: Not immutable (changes with each deploy)
+          #
+          # 2. type=sha,prefix=main-
+          #    CREATES: xjohnfit/weather-app:main-abc1234
+          #    FORMAT: main-<first-7-chars-of-git-sha>
+          #    EXAMPLE: main-7f8a9b2
+          #    PURPOSE: Immutable, traceable deployments
+          #    BENEFITS:
+          #      - Know EXACTLY which code is deployed
+          #      - Easy rollback: kubectl set image ... :main-abc1234
+          #      - Git commit history matches deployed version
+          #
+          # COMPLETE TAG LIST GENERATED:
+          # - xjohnfit/weather-app:latest
+          # - xjohnfit/weather-app:main-7f8a9b2
+          #
+          # BOTH TAGS POINT TO SAME IMAGE:
+          # Docker creates one image, multiple tags reference it
+          # Saves registry space
+          #
+          # ALTERNATIVE TAGGING STRATEGIES:
+          #
+          # Semantic versioning:
+          #   type=semver,pattern={{version}}
+          #   Result: xjohnfit/weather-app:1.2.3
+          #   Requires: Git tags (v1.2.3)
+          #
+          # Branch-based:
+          #   type=ref,event=branch
+          #   Result: xjohnfit/weather-app:develop
+          #   Use case: Different tags per branch
+          #
+          # PR-based:
+          #   type=ref,event=pr
+          #   Result: xjohnfit/weather-app:pr-123
+          #   Use case: Preview deployments
+          #
+          # OUR CHOICE:
+          # - latest: Easy quick reference
+          # - main-<sha>: Immutable deployments
+          # Best of both worlds!
+      
+      - name: Build and push Docker image
+        # BUILD + PUSH: Create image and upload to Docker Hub
+        
+        uses: docker/build-push-action@v5
+        # WHAT: Official Docker build and push action
+        # COMBINES:
+        # - docker build (create image)
+        # - docker tag (add tags)
+        # - docker push (upload to registry)
+        #
+        # ADVANTAGES OVER docker build:
+        # ✓ Automatic caching
+        # ✓ Parallel layer builds
+        # ✓ Better error handling
+        # ✓ Build provenance (SBOM)
+        # ✓ Multi-platform support
+        
+        with:
+          context: .
+          # BUILD CONTEXT: Which directory to send to Docker
+          # "." = Repository root
+          # Contains: Dockerfile, source code, etc.
+          # Respects: .dockerignore exclusions
+          #
+          # CONTEXT SIZE:
+          # WITHOUT .dockerignore: ~300MB (node_modules, .git, etc.)
+          # WITH .dockerignore: ~5MB (only necessary files)
+          # Faster uploads to Docker daemon
+          
+          push: true
+          # PUSH: Upload image to Docker Hub after building
+          # OPTIONS:
+          #   true: Build and push
+          #   false: Build only (testing)
+          #
+          # WHEN FALSE:
+          # - Image built locally
+          # - Not uploaded to registry
+          # - Useful for: Testing builds, dry runs
+          
+          tags: ${{ steps.meta.outputs.tags }}
+          # TAGS: From metadata-action output
+          # EXPANDS TO:
+          #   - xjohnfit/weather-app:latest
+          #   - xjohnfit/weather-app:main-7f8a9b2
+          #
+          # BOTH TAGS PUSHED TO DOCKER HUB:
+          # $ docker pull xjohnfit/weather-app:latest
+          # $ docker pull xjohnfit/weather-app:main-7f8a9b2
+          # Both return same image (different tags)
+          
+          labels: ${{ steps.meta.outputs.labels }}
+          # OCI LABELS: Metadata embedded in image
+          # GENERATED BY metadata-action:
+          #   org.opencontainers.image.source: github.com/xjohn/mern-weather-v2
+          #   org.opencontainers.image.revision: 7f8a9b2c...
+          #   org.opencontainers.image.created: 2024-01-15T12:00:00Z
+          #
+          # VIEW LABELS:
+          # $ docker inspect xjohnfit/weather-app:latest
+          # Look for "Labels" section
+          #
+          # USES:
+          # - Image provenance (where did this come from?)
+          # - Security scanning (which Git commit?)
+          # - Compliance (when was this built?)
+          
+          build-args: |
+            VITE_API_KEY=${{ secrets.VITE_API_KEY }}
+            VITE_OPENWEATHER_API_KEY=${{ secrets.VITE_OPENWEATHER_API_KEY }}
+          # BUILD ARGUMENTS: Variables for Dockerfile ARG directives
+          #
+          # FLOW:
+          # 1. GitHub Actions: Loads secrets
+          # 2. docker build: Receives as --build-arg
+          # 3. Dockerfile: ARG VITE_API_KEY
+          # 4. Dockerfile: ENV VITE_API_KEY=$VITE_API_KEY
+          # 5. npm run build: Reads from process.env
+          # 6. Vite: Embeds in static JavaScript
+          # 7. Final image: Contains embedded values
+          #
+          # SECURITY:
+          # - Not stored in image layers (removed after build)
+          # - Only final ENV values persist
+          # - Can't extract build args from built image
+          # - BUT: Values embedded in JavaScript (visible to users!)
+          #
+          # WHY NOT ENV IN DOCKERFILE?
+          # ENV VITE_API_KEY=hardcoded  ← BAD (committed to git!)
+          # ARG + build-arg ← GOOD (from secrets)
+          
+          cache-from: type=gha
+          # CACHE SOURCE: Where to load cache from
+          # "gha" = GitHub Actions cache
+          #
+          # CACHING LAYERS:
+          # Docker builds in layers:
+          #   Layer 1: FROM node:20-alpine
+          #   Layer 2: COPY package*.json
+          #   Layer 3: RUN npm ci
+          #   Layer 4: COPY source
+          #   Layer 5: RUN npm run build
+          #
+          # FIRST BUILD:
+          # - All layers built from scratch
+          # - Takes ~180 seconds
+          # - Cached for future builds
+          #
+          # SECOND BUILD (no changes):
+          # - All layers from cache
+          # - Takes ~10 seconds
+          # - Only tagging + pushing (~5 seconds)
+          #
+          # SECOND BUILD (package.json changed):
+          # - Layers 1-2: From cache
+          # - Layer 3: Rebuild (npm ci)
+          # - Layers 4-5: Rebuild
+          # - Takes ~60 seconds
+          #
+          # CACHE BENEFITS:
+          # ✓ Faster CI/CD (90% faster for no changes)
+          # ✓ Lower bandwidth usage
+          # ✓ Cheaper (less compute time)
+          
+          cache-to: type=gha,mode=max
+          # CACHE DESTINATION: Where to save cache
+          # "gha" = GitHub Actions cache
+          # "mode=max" = Cache all layers (not just final)
+          #
+          # MODES:
+          # - mode=min: Only cache final image layers
+          # - mode=max: Cache all intermediate layers
+          #
+          # WHY mode=max?
+          # - Faster rebuilds (more layers cached)
+          # - Especially good for multi-stage builds
+          # - Stage 1 (node build) and Stage 2 (nginx) both cached
+          #
+          # CACHE LIMITS:
+          # GitHub Actions cache: 10 GB per repository
+          # Old cache automatically evicted (LRU)
+        
+        # BUILD OUTPUT:
+        # ✓ Image built: xjohnfit/weather-app:latest
+        # ✓ Image digest: sha256:abc123...
+        # ✓ Size: ~44MB
+        # ✓ Pushed to: Docker Hub
+        # ✓ Layers cached for next build
+      
+      - name: Set up kubectl
+        # KUBECTL SETUP: Install Kubernetes CLI
+        
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+        # COMMAND BREAKDOWN:
+        #
+        # mkdir -p $HOME/.kube
+        #   Create kubectl config directory
+        #   -p: Don't error if exists
+        #   Location: /home/runner/.kube/
+        #
+        # echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+        #   Decode and save kubeconfig
+        #   secrets.KUBECONFIG: Base64-encoded kubectl config
+        #   base64 -d: Decode from base64
+        #   >: Write to config file
+        #
+        # chmod 600 $HOME/.kube/config
+        #   Set file permissions (owner read/write only)
+        #   Security: Prevent other users from reading
+        #   Required: kubectl won't use world-readable config
+        #
+        # KUBECONFIG FILE FORMAT:
+        # apiVersion: v1
+        # kind: Config
+        # clusters:
+        # - cluster:
+        #     server: https://<vps-ip>:6443
+        #     certificate-authority-data: <base64-ca-cert>
+        #   name: kubernetes
+        # contexts:
+        # - context:
+        #     cluster: kubernetes
+        #     user: github-actions
+        #   name: default
+        # current-context: default
+        # users:
+        # - name: github-actions
+        #   user:
+        #     token: <access-token>
+        #
+        # HOW TO CREATE KUBECONFIG SECRET:
+        #
+        # ON YOUR VPS (Kubernetes master):
+        #
+        # 1. Create ServiceAccount for GitHub Actions:
+        #    $ kubectl create serviceaccount github-actions
+        #
+        # 2. Create ClusterRoleBinding (admin permissions):
+        #    $ kubectl create clusterrolebinding github-actions \
+        #      --clusterrole=cluster-admin \
+        #      --serviceaccount=default:github-actions
+        #
+        #    WARNING: cluster-admin gives full access!
+        #    Production: Use limited Role with only deployment permissions
+        #
+        # 3. Get ServiceAccount token:
+        #    $ kubectl create token github-actions --duration=8760h
+        #    (8760h = 1 year token validity)
+        #
+        # 4. Get cluster CA certificate:
+        #    $ kubectl get secret $(kubectl get sa github-actions -o jsonpath='{.secrets[0].name}') \
+        #      -o jsonpath='{.data.ca\.crt}'
+        #
+        # 5. Create kubeconfig file:
+        #    $ cat > kubeconfig.yaml <<EOF
+        #    apiVersion: v1
+        #    kind: Config
+        #    clusters:
+        #    - cluster:
+        #        server: https://<YOUR-VPS-IP>:6443
+        #        certificate-authority-data: <CA-CERT-FROM-STEP-4>
+        #      name: kubernetes
+        #    contexts:
+        #    - context:
+        #        cluster: kubernetes
+        #        user: github-actions
+        #      name: default
+        #    current-context: default
+        #    users:
+        #    - name: github-actions
+        #      user:
+        #        token: <TOKEN-FROM-STEP-3>
+        #    EOF
+        #
+        # 6. Base64 encode kubeconfig:
+        #    $ cat kubeconfig.yaml | base64 -w 0
+        #    Copies encoded config to clipboard
+        #    -w 0: No line wrapping
+        #
+        # 7. Add to GitHub Secrets:
+        #    Repository → Settings → Secrets → New secret
+        #    Name: KUBECONFIG
+        #    Value: <paste-base64-output-from-step-6>
+        #
+        # SECURITY NOTES:
+        # ✗ NEVER commit kubeconfig to git
+        # ✗ NEVER share token publicly
+        # ✓ Use short-lived tokens (rotate every 90 days)
+        # ✓ Use least-privilege RBAC (not cluster-admin in production)
+        # ✓ Audit kubectl access logs
+      
+      - name: Deploy to Kubernetes
+        # DEPLOYMENT: Update running application
+        
+        run: |
+          # Extract the SHA tag from the metadata action output
+          SHA_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep "main-" | cut -d':' -f2)
+          
+          # Update the deployment with the new image
+          kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} \
+            ${{ env.CONTAINER_NAME }}=${{ env.DOCKER_IMAGE }}:${SHA_TAG} \
+            -n ${{ env.KUBE_NAMESPACE }}
+          
+          # Wait for rollout to complete
+          kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} \
+            -n ${{ env.KUBE_NAMESPACE }} \
+            --timeout=5m
+        # COMMAND BREAKDOWN:
+        #
+        # SHA_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep "main-" | cut -d':' -f2)
+        #   EXTRACT SHA TAG from metadata output
+        #
+        #   Input: "xjohnfit/weather-app:latest\nxjohnfit/weather-app:main-7f8a9b2"
+        #   grep "main-": Filter line with "main-"
+        #   Result: "xjohnfit/weather-app:main-7f8a9b2"
+        #   cut -d':' -f2: Split by ":" and take second field
+        #   Result: "main-7f8a9b2"
+        #   Stored in: SHA_TAG variable
+        #
+        #   WHY EXTRACT SHA TAG?
+        #   - Immutable deployments (not :latest)
+        #   - Traceable to specific Git commit
+        #   - Easy rollback to previous SHA
+        #
+        # kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} \
+        #   UPDATE DEPLOYMENT image
+        #
+        #   deployment/weather-app: Target deployment
+        #   MUST MATCH: kubernetes/deployment.yml metadata.name
+        #
+        # ${{ env.CONTAINER_NAME }}=${{ env.DOCKER_IMAGE }}:${SHA_TAG} \
+        #   SPECIFY NEW IMAGE
+        #
+        #   Format: <container-name>=<new-image>
+        #   Example: weather-app=xjohnfit/weather-app:main-7f8a9b2
+        #   Container name MUST MATCH: deployment.yml spec.template.spec.containers[].name
+        #
+        # -n ${{ env.KUBE_NAMESPACE }}
+        #   NAMESPACE: default
+        #   Where deployment exists
+        #
+        # WHAT HAPPENS:
+        # 1. kubectl sends update to Kubernetes API
+        # 2. Deployment controller detects image change
+        # 3. Creates new ReplicaSet with new image
+        # 4. Starts new pods (2 replicas)
+        # 5. Waits for new pods to be ready (health checks pass)
+        # 6. Terminates old pods
+        # 7. Deletes old ReplicaSet (keeps for rollback history)
+        #
+        # ROLLING UPDATE STRATEGY:
+        # - maxSurge: 1 (can have 3 pods during update)
+        # - maxUnavailable: 0 (always 2 pods available)
+        # - Zero downtime!
+        #
+        # kubectl rollout status deployment/${{ env.DEPLOYMENT_NAME }} \
+        #   WAIT FOR COMPLETION
+        #
+        #   Watches deployment until:
+        #   - All new pods running
+        #   - All health checks passing
+        #   - Old pods terminated
+        #
+        # -n ${{ env.KUBE_NAMESPACE }}
+        #   Same namespace as above
+        #
+        # --timeout=5m
+        #   TIMEOUT: 5 minutes
+        #   If deployment not ready in 5 minutes:
+        #   - Workflow fails
+        #   - Deployment left in progressing state
+        #   - Manual intervention needed
+        #
+        # ROLLOUT STATUS OUTPUT:
+        # Waiting for deployment "weather-app" rollout to finish: 1 out of 2 new replicas have been updated...
+        # Waiting for deployment "weather-app" rollout to finish: 1 old replicas are pending termination...
+        # deployment "weather-app" successfully rolled out
+        #
+        # SUCCESS CRITERIA:
+        # - 2 pods running (desired replicas)
+        # - All pods ready (readiness probe passing)
+        # - All pods up-to-date (new image)
+        # - Zero old pods
+        #
+        # ROLLOUT FAILURE SCENARIOS:
+        # - Image pull error (invalid tag, registry auth)
+        # - Container crash (code error, missing env var)
+        # - Health check failure (app not starting)
+        # - Insufficient resources (not enough CPU/memory)
+        #
+        # AUTOMATIC ROLLBACK:
+        # If rollout fails:
+        #   - New pods won't become ready
+        #   - Old pods kept running (zero downtime!)
+        #   - Manual rollback: kubectl rollout undo deployment/weather-app
+        #
+        # ROLLBACK COMMAND:
+        # $ kubectl rollout undo deployment/weather-app
+        # Reverts to previous ReplicaSet
+        # Previous image (main-abc1234) restored
+        # New pods start with old image
+        #
+        # VIEW ROLLOUT HISTORY:
+        # $ kubectl rollout history deployment/weather-app
+        # REVISION  CHANGE-CAUSE
+        # 1         Initial deployment
+        # 2         Update to main-7f8a9b2
+        # 3         Update to main-abc1234  ← Current
+        #
+        # ROLLBACK TO SPECIFIC REVISION:
+        # $ kubectl rollout undo deployment/weather-app --to-revision=2
+        #
+        # DEPLOYMENT VERIFICATION:
+        # After successful rollout, verify:
+        #
+        # 1. Check pods:
+        #    $ kubectl get pods -l app=weather-app
+        #    NAME                          READY   STATUS    RESTARTS   AGE
+        #    weather-app-7f8a9b2-xxx       1/1     Running   0          1m
+        #    weather-app-7f8a9b2-yyy       1/1     Running   0          1m
+        #
+        # 2. Check deployment:
+        #    $ kubectl get deployment weather-app
+        #    NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+        #    weather-app   2/2     2            2           5m
+        #
+        # 3. Check image version:
+        #    $ kubectl get deployment weather-app -o jsonpath='{.spec.template.spec.containers[0].image}'
+        #    xjohnfit/weather-app:main-7f8a9b2
+        #
+        # 4. View events:
+        #    $ kubectl describe deployment weather-app
+        #    Events:
+        #      Normal  ScalingReplicaSet  Scaled up replica set to 2
+        #      Normal  ScalingReplicaSet  Scaled down old replica set to 0
+        #
+        # 5. Test application:
+        #    $ curl https://weatherapp.codewithxjohn.com
+        #    Should return updated app!
+
+# ============================================
+# COMPLETE WORKFLOW EXECUTION
+# ============================================
+#
+# TRIGGER:
+# $ git commit -m "Add new feature"
+# $ git push origin main
+#
+# GITHUB ACTIONS EXECUTION:
+#
+# [00:00] Workflow triggered: "Deploy Weather App"
+# [00:01] Job 1: trivy-scan (ubuntu-latest)
+#   [00:01] Checkout code
+#   [00:05] Build Docker image for scanning
+#   [00:50] Run Trivy vulnerability scanner
+#   [01:00] ✓ Scan complete: 0 vulnerabilities
+# [01:00] Job 2: build-and-deploy (ubuntu-latest)
+#   [01:01] Checkout code
+#   [01:03] Set up Docker Buildx
+#   [01:05] Log in to Docker Hub
+#   [01:06] Extract metadata
+#   [01:07] Build and push Docker image
+#     [01:08] Layer 1/8: FROM node:20-alpine (cached)
+#     [01:09] Layer 2/8: COPY package*.json (cached)
+#     [01:10] Layer 3/8: RUN npm ci (cached)
+#     [01:15] Layer 4/8: COPY source (new)
+#     [01:20] Layer 5/8: RUN npm run build (new)
+#     [01:50] Layer 6/8: FROM nginx:alpine (cached)
+#     [01:51] Layer 7/8: COPY nginx.conf (cached)
+#     [01:52] Layer 8/8: COPY dist (new)
+#     [01:55] Pushing to Docker Hub...
+#     [02:00] ✓ Pushed: xjohnfit/weather-app:latest
+#     [02:01] ✓ Pushed: xjohnfit/weather-app:main-7f8a9b2
+#   [02:02] Set up kubectl
+#   [02:03] Deploy to Kubernetes
+#     [02:04] kubectl set image deployment/weather-app...
+#     [02:05] Waiting for rollout...
+#     [02:20] New pod 1/2 running
+#     [02:35] New pod 2/2 running
+#     [02:40] Health checks passing
+#     [02:45] Old pods terminating
+#     [02:50] ✓ Rollout complete
+# [02:50] ✓ Workflow succeeded
+#
+# TOTAL TIME: ~3 minutes
+# - Scanning: 1 minute
+# - Building: 1 minute
+# - Deploying: 1 minute
+#
+# VIEW IN GITHUB:
+# Repository → Actions tab → "Deploy Weather App" → Latest run
+#
+# DEPLOYMENT COMPLETE:
+# Visit: https://weatherapp.codewithxjohn.com
+# Now serving: Git commit 7f8a9b2
+
+# ============================================
+# TROUBLESHOOTING
+# ============================================
+#
+# PROBLEM: Workflow fails at trivy-scan
+# SOLUTION:
+# 1. Check Trivy output for CVEs
+# 2. Update base images: nginx:alpine
+# 3. Update npm packages: npm update
+# 4. If no fix: Set exit-code: '0' (warning only)
+#
+# PROBLEM: Docker login fails
+# SOLUTION:
+# 1. Verify DOCKER_PASSWORD secret exists
+# 2. Regenerate Docker Hub access token
+# 3. Update GitHub secret with new token
+# 4. Check Docker Hub rate limits (100 pulls/6 hours for free tier)
+#
+# PROBLEM: Build fails - "secret not found"
+# SOLUTION:
+# 1. Add secrets: VITE_API_KEY, VITE_OPENWEATHER_API_KEY
+# 2. Repository → Settings → Secrets → Actions → New secret
+# 3. Ensure exact names match workflow file
+#
+# PROBLEM: kubectl authentication fails
+# SOLUTION:
+# 1. Verify KUBECONFIG secret exists
+# 2. Check base64 encoding: cat kubeconfig.yaml | base64 -w 0
+# 3. Verify ServiceAccount token not expired
+# 4. Regenerate token: kubectl create token github-actions --duration=8760h
+#
+# PROBLEM: Deployment rollout timeout
+# SOLUTION:
+# 1. Check pod status: kubectl get pods
+# 2. View pod logs: kubectl logs <pod-name>
+# 3. Describe pod: kubectl describe pod <pod-name>
+# 4. Common issues:
+#    - Image pull error (check Docker Hub, tag exists?)
+#    - Container crash (check logs for errors)
+#    - Health check failure (readiness probe failing?)
+#    - Insufficient resources (CPU/memory limits too high?)
+#
+# PROBLEM: Deployment succeeds but app doesn't work
+# SOLUTION:
+# 1. Check Service: kubectl get svc weather-app
+# 2. Check Ingress: kubectl get ingress weather-app-ingress
+# 3. Check certificate: kubectl get certificate weather-app-tls
+# 4. View events: kubectl get events --sort-by='.lastTimestamp'
+# 5. Test pod directly: kubectl port-forward pod/<pod-name> 8080:8080
+# 6. curl http://localhost:8080 (should return HTML)
+#
+# ============================================
+# MONITORING
+# ============================================
+#
+# GITHUB ACTIONS:
+# - View all runs: Repository → Actions
+# - Workflow status badge: Add to README.md
+# - Email notifications: Settings → Notifications
+# - Slack integration: GitHub Apps → Slack
+#
+# KUBERNETES:
+# - Pod status: kubectl get pods -w
+# - Logs: kubectl logs -f deployment/weather-app
+# - Events: kubectl get events --watch
+# - Dashboard: kubectl proxy (http://localhost:8001/ui)
+#
+# APPLICATION:
+# - Uptime: UptimeRobot, Pingdom, StatusCake
+# - Errors: Sentry, Rollbar, Bugsnag
+# - Performance: Google Analytics, Lighthouse
+# - Logs: Loki, ELK stack, CloudWatch
+#
+# DOCKER HUB:
+# - Image size: Check repository tags
+# - Pull count: View statistics
+# - Vulnerability scan: Docker Hub auto-scans
+#
+# ============================================
+# BEST PRACTICES
+# ============================================
+#
+# 1. VERSION EVERYTHING:
+#    ✓ Use SHA tags (main-7f8a9b2)
+#    ✓ Keep :latest for convenience
+#    ✓ Never manually edit deployments
+#
+# 2. SECURITY:
+#    ✓ Scan images before deploy (Trivy)
+#    ✓ Use access tokens (not passwords)
+#    ✓ Rotate secrets every 90 days
+#    ✓ Limit RBAC permissions
+#    ✓ Never commit secrets to git
+#
+# 3. TESTING:
+#    ✓ Add unit tests job
+#    ✓ Add integration tests
+#    ✓ Test in staging namespace first
+#    ✓ Smoke test after deployment
+#
+# 4. MONITORING:
+#    ✓ Set up alerts (Slack, email)
+#    ✓ Monitor deployment metrics
+#    ✓ Track rollback frequency
+#    ✓ Log all kubectl commands
+#
+# 5. EFFICIENCY:
+#    ✓ Use Docker layer caching
+#    ✓ Parallelize independent jobs
+#    ✓ Only deploy on main branch
+#    ✓ Skip CI for docs changes
+#
+# 6. DOCUMENTATION:
+#    ✓ Comment complex steps
+#    ✓ Link to relevant docs
+#    ✓ Document secrets setup
+#    ✓ Keep README updated

@@ -1,0 +1,315 @@
+# ============================================
+# KUBERNETES SERVICE MANIFEST
+# ============================================
+# A Service provides a stable network endpoint for accessing pods
+# Think of it as an internal load balancer with a fixed IP/DNS name
+
+apiVersion: v1
+# WHAT: Core Kubernetes API (v1)
+# Services are core resources, been in v1 since Kubernetes 1.0
+# Unlike Deployment which is apps/v1
+
+kind: Service
+# WHAT: Type of resource we're creating
+# Service: Provides networking and load balancing for pods
+
+metadata:
+  name: weather-app
+  # WHAT: Unique name for this Service
+  # CREATES DNS: weather-app.default.svc.cluster.local
+  # - weather-app: service name
+  # - default: namespace
+  # - svc.cluster.local: cluster domain
+  #
+  # USAGE FROM OTHER PODS:
+  # - curl http://weather-app:8080/  (short form, same namespace)
+  # - curl http://weather-app.default:8080/  (with namespace)
+  # - curl http://weather-app.default.svc.cluster.local:8080/  (full FQDN)
+  #
+  # USAGE FROM INGRESS:
+  # - Ingress references this by name: weather-app
+  # - Forwards http://weatherapp.codewithxjohn.com → http://weather-app:8080
+
+spec:
+  selector:
+    app: weather-app
+    # CRITICAL: This is how Service finds pods to route traffic to
+    # MATCHES: deployment.yml → spec.template.metadata.labels.app
+    #
+    # HOW IT WORKS:
+    # 1. Service constantly watches all pods in namespace
+    # 2. Filters pods where label app=weather-app
+    # 3. Checks each pod's readinessProbe status
+    # 4. Builds list of "endpoints" (healthy pod IPs)
+    # 5. Load balances traffic across those endpoints
+    #
+    # EXAMPLE:
+    # Pods in cluster:
+    #   - weather-app-abc123: app=weather-app, Ready=true  ✓ included
+    #   - weather-app-def456: app=weather-app, Ready=true  ✓ included
+    #   - weather-app-ghi789: app=weather-app, Ready=false ✗ excluded
+    #   - backend-api-jkl012: app=backend-api           ✗ wrong label
+    #
+    # Service endpoints: [weather-app-abc123, weather-app-def456]
+  
+  ports:
+  - protocol: TCP
+    # WHAT: Network protocol for this port mapping
+    # TCP: Transmission Control Protocol (reliable, ordered delivery)
+    # OPTIONS: TCP (web apps, APIs) or UDP (video, gaming, DNS)
+    # 
+    # WHY TCP?
+    # - HTTP/HTTPS require TCP (nginx serves HTTP)
+    # - Guarantees packets arrive in order
+    # - Retransmits lost packets
+    # - Perfect for web applications
+    
+    port: 8080
+    # WHAT: Port the Service listens on (cluster-internal)
+    # THIS IS: The port other services/ingress use to reach this service
+    # USAGE: Ingress → http://weather-app:8080/
+    #
+    # ANALOGY: Like a receptionist desk number
+    # - External visitors see "Reception" (Service name)
+    # - They call extension 8080 (Service port)
+    # - Receptionist routes to an employee (targetPort on pod)
+    #
+    # CAN BE DIFFERENT from targetPort:
+    # Example: port: 80 → targetPort: 8080
+    # Ingress connects on 80, Service forwards to pod's 8080
+    #
+    # WE USE SAME: port: 8080 = targetPort: 8080 (simpler, clearer)
+    
+    targetPort: 8080
+    # WHAT: Port on the pod that receives traffic
+    # MATCHES: 
+    # - deployment.yml → spec.template.spec.containers[].ports.containerPort
+    # - nginx.conf → listen 8080
+    # - Dockerfile → EXPOSE 8080
+    #
+    # HOW TRAFFIC FLOWS:
+    # Ingress → Service IP:8080 → Pod IP:8080 → nginx container port 8080
+    #
+    # WHY DIFFERENT FIELDS?
+    # Allows port translation:
+    # - Service listens on port 80 (standard HTTP)
+    # - Routes to targetPort 8080 (non-root user requirement)
+    # - Legacy systems can connect to :80, modern apps run on :8080
+  
+  type: ClusterIP
+  # WHAT: Type of Service (how it's exposed)
+  # 
+  # ============================================
+  # SERVICE TYPE OPTIONS:
+  # ============================================
+  #
+  # 1. ClusterIP (THIS ONE):
+  #    - Creates internal-only IP address
+  #    - Accessible only from within cluster
+  #    - Perfect for: Internal services, behind Ingress
+  #    - IP range: 10.96.0.0/12 (cluster internal network)
+  #    - Cost: Free (no external resources)
+  #
+  # 2. NodePort:
+  #    - Opens port on every cluster node (30000-32767)
+  #    - Accessible from: http://<node-ip>:30123
+  #    - Use case: Testing, no load balancer available
+  #    - Downsides: 
+  #      * Need to know node IPs (they can change)
+  #      * Port range limitation
+  #      * No SSL termination
+  #
+  # 3. LoadBalancer:
+  #    - Creates cloud load balancer (AWS ELB, GCP LB, Azure LB)
+  #    - Gets external IP address
+  #    - Accessible from internet
+  #    - Use case: Each service needs its own external IP
+  #    - Downside: Cost! Each service = separate LB ($20-50/month)
+  #
+  # 4. ExternalName:
+  #    - Maps to external DNS name
+  #    - Returns CNAME record
+  #    - Use case: Point to external service (e.g., AWS RDS)
+  #
+  # WHY ClusterIP FOR US?
+  # - We use Traefik Ingress for external access
+  # - Ingress → ClusterIP Service → Pods
+  # - One Ingress can route multiple domains to different services
+  # - No need for expensive LoadBalancer per service
+  # - SSL/TLS handled by Ingress (Let's Encrypt certificates)
+
+# ============================================
+# HOW KUBERNETES SERVICE WORKS
+# ============================================
+#
+# SERVICE IP ADDRESS:
+# When created, Service gets a Cluster IP (e.g., 10.96.10.50)
+# This IP is stable - doesn't change unless service deleted
+#
+# DNS RECORD:
+# Kubernetes DNS automatically creates:
+#   weather-app.default.svc.cluster.local → 10.96.10.50
+#
+# ENDPOINTS TRACKING:
+# Service controller continuously monitors:
+#   1. Pods matching selector (app=weather-app)
+#   2. Each pod's readiness probe status
+#   3. Each pod's current IP address
+#
+# ENDPOINT EXAMPLE:
+# $ kubectl get endpoints weather-app
+# NAME          ENDPOINTS
+# weather-app   172.17.0.5:8080,172.17.0.6:8080
+#               ↑ Pod #1 IP         ↑ Pod #2 IP
+#
+# LOAD BALANCING:
+# When request hits Service IP:
+#   1. iptables/IPVS rules intercept traffic
+#   2. Randomly select one healthy endpoint
+#   3. Forward packet to selected pod IP
+#   4. Pod responds directly to client (no return through service)
+#
+# EXAMPLE FLOW:
+# Ingress → 10.96.10.50:8080 (Service)
+#        → iptables picks random endpoint
+#        → 172.17.0.5:8080 (Pod #1)
+#        → nginx serves response
+#        → Response goes directly back to Ingress
+#
+# SESSION AFFINITY:
+# By default: random distribution (round-robin-ish)
+# Can enable: sessionAffinity: ClientIP
+# Effect: Same client IP always goes to same pod
+# Use case: Sessions stored in memory (not our case)
+#
+# ============================================
+# SERVICE DISCOVERY
+# ============================================
+#
+# KUBERNETES DNS:
+# Every pod gets /etc/resolv.conf:
+#   nameserver 10.96.0.10  (Kubernetes DNS service)
+#   search default.svc.cluster.local svc.cluster.local cluster.local
+#
+# RESOLUTION:
+# Pod container: curl http://weather-app:8080/
+# 1. Check /etc/resolv.conf
+# 2. Try: weather-app.default.svc.cluster.local
+# 3. DNS returns: 10.96.10.50
+# 4. Connect to: 10.96.10.50:8080
+# 5. iptables redirect to pod IP
+#
+# CROSS-NAMESPACE:
+# If frontend in 'prod' namespace needs to call us in 'default':
+#   curl http://weather-app.default:8080/
+#   (must include namespace when crossing boundaries)
+#
+# EXTERNAL ACCESS:
+# Services with ClusterIP are NOT accessible from outside cluster
+# Must use:
+#   - Ingress (recommended) ← we use this
+#   - NodePort (testing only)
+#   - LoadBalancer (expensive)
+#   - kubectl port-forward (development only)
+#
+# ============================================
+# CONNECTION LIFECYCLE
+# ============================================
+#
+# REQUEST ARRIVES:
+# 1. Ingress receives: http://weatherapp.codewithxjohn.com/
+# 2. Ingress rule: route to service 'weather-app' port 8080
+# 3. Ingress resolves DNS: weather-app → 10.96.10.50
+# 4. Ingress sends: GET / to 10.96.10.50:8080
+#
+# SERVICE PROCESSES:
+# 5. iptables intercepts: destination=10.96.10.50:8080
+# 6. iptables lookup: endpoints for service 'weather-app'
+# 7. Endpoints: [172.17.0.5:8080, 172.17.0.6:8080]
+# 8. iptables random selection: 172.17.0.5:8080 (Pod #1)
+# 9. iptables DNAT: change destination to 172.17.0.5:8080
+#
+# POD PROCESSES:
+# 10. Packet arrives at Pod #1 network interface
+# 11. Pod routes to container port 8080
+# 12. nginx receives GET / request
+# 13. nginx processes (see nginx.conf logic)
+# 14. nginx response: 200 OK + index.html
+#
+# RESPONSE RETURNS:
+# 15. Response goes directly from Pod #1 to Ingress
+#     (NOT back through Service - asymmetric routing)
+# 16. Ingress forwards to client
+# 17. Client browser receives HTML
+#
+# POD FAILURE HANDLING:
+# If Pod #1 crashes during request:
+# - Request fails (connection reset)
+# - Client retries (browser or code)
+# - Service routes retry to Pod #2
+# - Request succeeds
+#
+# Why not automatic retry?
+# - Service is Layer 4 (TCP)
+# - Can't distinguish between:
+#   * Connection to pod failed (safe to retry)
+#   * Pod processed request but crashed before response (NOT safe to retry)
+# - Application-level retries are smarter (HTTP client libraries)
+#
+# ============================================
+# COMPARING WITH/WITHOUT SERVICE
+# ============================================
+#
+# WITHOUT SERVICE:
+# Ingress config:
+#   backend:
+#     - 172.17.0.5:8080  # Pod #1 IP (changes when pod restarts!)
+#
+# Problems:
+# 1. Pod restarts → new
+
+ IP → Ingress broken
+# 2. Rolling update → IPs change → Ingress broken
+# 3. Multiple replicas → only connects to one pod
+# 4. Manual load balancing → complex Ingress config
+# 5. Health checks → Ingress must implement
+#
+# WITH SERVICE:
+# Ingress config:
+#   backend:
+#     serviceName: weather-app
+#     servicePort: 8080
+#
+# Benefits:
+# 1. Stable name (weather-app) never changes ✓
+# 2. Automatic endpoint updates ✓
+# 3. Automatic load balancing ✓
+# 4. Integrates with pod health checks ✓
+# 5. DNS resolution ✓
+# 6. Future-proof (pod IPs can change freely) ✓
+
+# ============================================
+# DEBUGGING COMMANDS
+# ============================================
+#
+# Check Service details:
+# $ kubectl get service weather-app
+# $ kubectl describe service weather-app
+#
+# Check Service endpoints (which pods):
+# $ kubectl get endpoints weather-app
+#
+# Test Service from inside cluster:
+# $ kubectl run -it test --image=busybox --rm -- sh
+# $ wget -O- http://weather-app:8080/
+#
+# Test DNS resolution:
+# $ kubectl run -it test --image=busybox --rm -- sh
+# $ nslookup weather-app
+# 
+# Port forward for local testing:
+# $ kubectl port-forward service/weather-app 8080:8080
+# $ curl http://localhost:8080/  (from your machine)
+#
+# Watch Service events:
+# $ kubectl get events --field-selector involvedObject.name=weather-app
