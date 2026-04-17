@@ -15,28 +15,36 @@ const BackgroundLayout = () => {
 
     useEffect(() => {
         if (weather.conditions) {
-            let imageString = weather.conditions;
+            const condition = weather.conditions.toLowerCase();
 
-            if (imageString.toLowerCase().includes('clear')) {
+            if (condition.includes('clear')) {
                 setImage(clearWeather);
-            } else if(imageString.toLowerCase().includes('cloudy')) {
+            } else if (condition.includes('cloud')) {
                 setImage(cloudyWeather);
-            } else if(imageString.toLowerCase().includes('fog')) {
+            } else if (condition.includes('fog')) {
                 setImage(fogWeather);
-            } else if(imageString.toLowerCase().includes('rain')) {
+            } else if (condition.includes('rain')) {
                 setImage(rainyWeather);
-            } else if(imageString.toLowerCase().includes('snow')) {
+            } else if (condition.includes('snow')) {
                 setImage(snowWeather);
-            } else if(imageString.toLowerCase().includes('storm' || imageString.toLowerCase().includes('thunder'))) {
+            } else if (condition.includes('storm') || condition.includes('thunder')) {
                 setImage(stormWeather);
-            } else if(imageString.toLowerCase().includes('sunny')) {
+            } else if (condition.includes('sunny')) {
                 setImage(sunnyWeather);
             }
         }
     }, [weather]);
 
     return (
-      <img src={image} alt="Weather Image" className='h-screen w-full fixed left-0 top-0 -z-10' />
+        <>
+            <img
+                src={image}
+                alt="Weather Background"
+                className='h-screen w-full fixed left-0 top-0 -z-20 object-cover'
+            />
+            {/* Subtle overlay to blend with gradient */}
+            <div className='h-screen w-full fixed left-0 top-0 -z-10 bg-gradient-to-br from-blue-500/40 via-purple-600/40 to-pink-500/40'></div>
+        </>
     );
 };
 

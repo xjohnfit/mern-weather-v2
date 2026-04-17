@@ -10,11 +10,80 @@
     box-sizing: border-box;
 }
 
-.glassCard{
-    background:  rgba(225,225,225,0.18);
-    box-shadow:  0 8px 32px 0 rgba(31,38,135,0.37);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+@layer components {
+    /* Modern Glass Card */
+    .modern-card {
+        @apply bg-white/10 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/20;
+        @apply transition-all duration-300 hover:border-white/30 hover:bg-white/15;
+    }
+
+    /* Mini Card */
+    .mini-card {
+        @apply bg-white/15 backdrop-blur-xl rounded-2xl p-4;
+        @apply border border-white/20 shadow-lg;
+        @apply transition-all duration-300 hover:bg-white/20 hover:scale-105;
+        @apply cursor-pointer;
+    }
+
+    /* Stat Card */
+    .stat-card {
+        @apply bg-white/10 backdrop-blur-lg rounded-xl p-4;
+        @apply flex flex-col items-center justify-center;
+        @apply border border-white/10;
+        @apply transition-all duration-200 hover:bg-white/15;
+    }
+
+    /* Modern Search Input */
+    .modern-search-container {
+        @apply w-full md:w-auto;
+    }
+
+    .modern-search-input {
+        @apply w-full md:w-80 px-6 py-3 pr-14;
+        @apply bg-white/95 backdrop-blur-lg;
+        @apply border-2 border-white/30;
+        @apply rounded-2xl;
+        @apply text-gray-700 placeholder-gray-400;
+        @apply focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-white;
+        @apply transition-all duration-200;
+        @apply shadow-lg;
+    }
+
+    /* Legacy glass card for backwards compatibility */
+    .glassCard {
+        @apply modern-card;
+    }
+}
+
+/* Animation */
+@keyframes float {
+    0%,
+    100% {
+        transform: translateY(0px);
+    }
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+.animate-float {
+    animation: float 3s ease-in-out infinite;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.3);
     border-radius: 10px;
-    border: 1px solid rgba(225,225,225,0.18);
-  }
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.5);
+}

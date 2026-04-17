@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useDate } from '../Utils/useDate';
 import { IoSunny } from 'react-icons/io5';
-import { FaCloud } from 'react-icons/fa';
-import { BsCloudFog2Fill } from 'react-icons/bs';
+import { FaCloud, FaWind } from 'react-icons/fa';
+import { BsCloudFog2Fill, BsDropletFill } from 'react-icons/bs';
 import { IoRainy } from 'react-icons/io5';
 import { FaRegSnowflake } from 'react-icons/fa';
 import { FaPooStorm } from 'react-icons/fa';
 import { TiWeatherWindyCloudy } from 'react-icons/ti';
+import { WiThermometer } from 'react-icons/wi';
 import '../index.css';
 
 const WeatherCard = ({
@@ -23,62 +24,68 @@ const WeatherCard = ({
 
     useEffect(() => {
         if (iconString) {
-            if (iconString.toLowerCase().includes('cloudy')) {
-                setIcon(<FaCloud size={50} />);
-            } else if (iconString.toLowerCase().includes('fog')) {
-                setIcon(<BsCloudFog2Fill size={50} />);
-            } else if (iconString.toLowerCase().includes('rain')) {
-                setIcon(<IoRainy size={50} />);
-            } else if (iconString.toLowerCase().includes('snow')) {
-                setIcon(<FaRegSnowflake size={50} />);
-            } else if (
-                iconString
-                    .toLowerCase()
-                    .includes(
-                        'storm' || iconString.toLowerCase().includes('thunder')
-                    )
-            ) {
-                setIcon(<FaPooStorm size={50} />);
-            } else if (iconString.toLowerCase().includes('wind')) {
-                setIcon(<TiWeatherWindyCloudy size={50} />);
+            const condition = iconString.toLowerCase();
+            if (condition.includes('cloud')) {
+                setIcon(<FaCloud size={80} className="text-white drop-shadow-lg" />);
+            } else if (condition.includes('fog')) {
+                setIcon(<BsCloudFog2Fill size={80} className="text-white/90 drop-shadow-lg" />);
+            } else if (condition.includes('rain')) {
+                setIcon(<IoRainy size={80} className="text-blue-200 drop-shadow-lg" />);
+            } else if (condition.includes('snow')) {
+                setIcon(<FaRegSnowflake size={80} className="text-blue-100 drop-shadow-lg" />);
+            } else if (condition.includes('storm') || condition.includes('thunder')) {
+                setIcon(<FaPooStorm size={80} className="text-yellow-200 drop-shadow-lg" />);
+            } else if (condition.includes('wind')) {
+                setIcon(<TiWeatherWindyCloudy size={80} className="text-white drop-shadow-lg" />);
             } else {
-                setIcon(<IoSunny size={50} />);
+                setIcon(<IoSunny size={80} className="text-yellow-300 drop-shadow-lg" />);
             }
         }
     }, [iconString]);
 
     return (
-        <div className="w-[25rem] min-w-[25rem] h-[35rem] glassCard p-4">
-            <div className="flex w-full justify-center items-center gap-4 mt-12 mb-4">
-                {icon}
-                <p className="font-bold text-5xl flex justify-center items-center">
-                    {temperature}&deg;F
+        <div className="w-full max-w-[450px] modern-card p-8">
+            {/* Location & Time */}
+            <div className="text-center mb-6">
+                <h2 className="text-2xl font-bold text-white mb-1">{place || 'Loading...'}</h2>
+                <p className="text-white/70 text-sm">
+                    {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </p>
+                <p className="text-white/60 text-sm mt-1">{time}</p>
+            </div>
+
+            {/* Main Temperature Display */}
+            <div className="flex flex-col items-center justify-center py-8">
+                <div className="mb-4 animate-float">
+                    {icon}
+                </div>
+                <div className="text-7xl font-bold text-white mb-2">
+                    {temperature ? Math.round(temperature) : '--'}<span className="text-5xl">&deg;</span>
+                </div>
+                <p className="text-2xl text-white/90 font-medium capitalize">
+                    {conditions || 'N/A'}
                 </p>
             </div>
-            <div className="font-bold text-center text-xl">{place}</div>
-            <div className="w-full flex justify-between items-center mt-4">
-                <p className="flex-1 text-center p-2 text-lg">
-                    {new Date().toDateString()}
-                </p>
-                <p className="flex-1 text-center p-2 text-lg">{time}</p>
-            </div>
-            <div className="w-full flex justify-between items-center mt-4 gap-4">
-                <div className="flex-1 text-center p-2 font-bold bg-blue-600 shadow rounded-lg">
-                    Wind Speed
-                    <p className="font-normal">{windSpeed} KM/H</p>
+
+            {/* Weather Details Grid */}
+            <div className="grid grid-cols-3 gap-4 mt-8">
+                <div className="stat-card">
+                    <FaWind className="text-2xl text-white/80 mb-2" />
+                    <p className="text-white/60 text-xs mb-1">Wind</p>
+                    <p className="text-white font-semibold">{windSpeed || '--'} mph</p>
                 </div>
-                <div className="flex-1 text-center p-2 font-bold rounded-lg bg-green-600">
-                    Humidity
-                    <p className="font-normal">{humidity} GM/m&#179;</p>
+
+                <div className="stat-card">
+                    <BsDropletFill className="text-2xl text-white/80 mb-2" />
+                    <p className="text-white/60 text-xs mb-1">Humidity</p>
+                    <p className="text-white font-semibold">{humidity || '--'}%</p>
                 </div>
-            </div>
-            <div className="w-full p-3 mt-4 flex justify-between items-center">
-                <p className="font-semibold text-lg">Heat Index</p>
-                <p className="font-semibold">{heatIndex ? heatIndex : 'N/A'}</p>
-            </div>
-            <hr className="bg-slate-600" />
-            <div className="w-full p-4 flex justify-center items-center text-3xl font-semibold">
-                {conditions}
+
+                <div className="stat-card">
+                    <WiThermometer className="text-3xl text-white/80 mb-1" />
+                    <p className="text-white/60 text-xs mb-1">Feels Like</p>
+                    <p className="text-white font-semibold">{heatIndex ? Math.round(heatIndex) : '--'}&deg;</p>
+                </div>
             </div>
         </div>
     );
