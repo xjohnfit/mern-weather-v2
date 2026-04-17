@@ -138,19 +138,19 @@ spec:
   # Each rule defines: host → service mapping
   # Traefik evaluates rules in order until match found
   
-  - host: weatherapp.codewithxjohn.com
+  - host: weather.codewithxjohn.com
     # WHAT: Domain name to match
     # MATCHES: Incoming HTTP request's "Host" header
     # 
     # DNS REQUIREMENT:
     # Your DNS must point this domain to your VPS IP:
-    #   weatherapp.codewithxjohn.com  A  <your-vps-ip>
+    #   weather.codewithxjohn.com  A  <your-vps-ip>
     #
     # HOW IT WORKS:
-    # 1. User types: https://weatherapp.codewithxjohn.com
-    # 2. Browser DNS lookup: weatherapp.codewithxjohn.com → 1.2.3.4
+    # 1. User types: https://weather.codewithxjohn.com
+    # 2. Browser DNS lookup: weather.codewithxjohn.com → 1.2.3.4
     # 3. Browser connects to: 1.2.3.4:443
-    # 4. HTTPS request includes: Host: weatherapp.codewithxjohn.com
+    # 4. HTTPS request includes: Host: weather.codewithxjohn.com
     # 5. Traefik receives request
     # 6. Traefik checks: Host header matches this rule? YES
     # 7. Traefik routes to: weather-app Service
@@ -177,16 +177,16 @@ spec:
         # "/" = root path (matches all paths starting with /)
         # 
         # PATH MATCHING EXAMPLES:
-        #   Request: https://weatherapp.codewithxjohn.com/
+        #   Request: https://weather.codewithxjohn.com/
         #   Match: YES (exact match)
         #
-        #   Request: https://weatherapp.codewithxjohn.com/weather
+        #   Request: https://weather.codewithxjohn.com/weather
         #   Match: YES (starts with /)
         #
-        #   Request: https://weatherapp.codewithxjohn.com/assets/logo.png
+        #   Request: https://weather.codewithxjohn.com/assets/logo.png
         #   Match: YES (starts with /)
         #
-        # ALL REQUESTS to weatherapp.codewithxjohn.com go to weather-app service
+        # ALL REQUESTS to weather.codewithxjohn.com go to weather-app service
         
         pathType: Prefix
         # WHAT: How to interpret the path
@@ -239,29 +239,30 @@ spec:
             #   serviceNamespace: other-namespace
             
             port:
-              number: 8080
+              number: 80
               # WHAT: Port on the Service to connect to
               # MUST MATCH: service.yml spec.ports[].port
               #
               # COMPLETE TRAFFIC FLOW:
               # Browser:443 
               #   → Traefik:443 (HTTPS) 
-              #   → Service:8080 (HTTP)
+              #   → Service:80 (HTTP)
               #   → Pod:8080 (HTTP)
               #   → nginx:8080 (HTTP)
               #
               # PORT CHANGES THROUGH STACK:
               # External: 443 (HTTPS standard port)
-              # Traefik → Service: 8080 (ClusterIP)
-              # Service → Pod: 8080 (targetPort)
+              # Traefik → Service: 80 (HTTP standard)
+              # Service → Pod: 8080 (targetPort - non-root)
               # Pod nginx: 8080 (listen port)
               #
-              # WHY NOT 80?
+              # WHY NOT 80 IN POD?
               # - External: 443 is HTTPS standard (browsers expect it)
+              # - Service: 80 is HTTP standard (conventional)
               # - Internal: 8080 because non-root user (nginx-app)
               #             can't bind to privileged ports (<1024)
   
-  - host: www.weatherapp.codewithxjohn.com
+  - host: www.weather.codewithxjohn.com
     # SECOND RULE: Handle www subdomain
     # SAME CONFIGURATION as apex domain above
     # 
@@ -271,13 +272,13 @@ spec:
     # - Search engines treat them as different sites
     # 
     # ALTERNATIVES:
-    # 1. DNS CNAME: www → weatherapp (redirect at DNS level)
+    # 1. DNS CNAME: www → weather (redirect at DNS level)
     # 2. HTTP redirect: www → apex (redirect at HTTP level)
     # 3. This approach: Serve same app on both (BEST for SEO)
     #
     # SEO IMPLICATIONS:
     # Serving identical content on both domains is fine
-    # Set canonical URL in HTML: <link rel="canonical" href="https://weatherapp.codewithxjohn.com/">
+    # Set canonical URL in HTML: <link rel="canonical" href="https://weather.codewithxjohn.com/">
     # Tells search engines which is the "primary" domain
     
     http:
@@ -290,7 +291,7 @@ spec:
             # SAME SERVICE: Both domains → same Service → same pods
             # Users see same app regardless of www prefix
             port:
-              number: 8080
+              number: 80
   
   tls:
   # TLS: Array of TLS configurations
@@ -301,14 +302,14 @@ spec:
     # Let's Encrypt can issue multi-domain certificates (SAN certificates)
     # One cert can cover multiple domains
     
-    - weatherapp.codewithxjohn.com
-    - www.weatherapp.codewithxjohn.com
+    - weather.codewithxjohn.com
+    - www.weather.codewithxjohn.com
     # BOTH domains in ONE certificate
     # 
     # CERTIFICATE TYPE: SAN (Subject Alternative Name)
     # Certificate covers:
-    #   - Primary: weatherapp.codewithxjohn.com
-    #   - SAN #1: www.weatherapp.codewithxjohn.com
+    #   - Primary: weather.codewithxjohn.com
+    #   - SAN #1: www.weather.codewithxjohn.com
     #
     # WHAT LET'S ENCRYPT DOES:
     # 1. cert-manager requests cert for both domains
@@ -317,13 +318,13 @@ spec:
     # 4. Browser sees valid cert for whichever domain they visit
     #
     # VERIFICATION PROCESS (HTTP01):
-    # For weatherapp.codewithxjohn.com:
+    # For weather.codewithxjohn.com:
     #   1. Let's Encrypt: "Prove you control this domain"
     #   2. cert-manager creates temporary Ingress
-    #   3. Let's Encrypt requests: http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/TOKEN
+    #   3. Let's Encrypt requests: http://weather.codewithxjohn.com/.well-known/acme-challenge/TOKEN
     #   4. cert-manager responds with challenge response
     #   5. Let's Encrypt validates response
-    #   6. Repeat for www.weatherapp.codewithxjohn.com
+    #   6. Repeat for www.weather.codewithxjohn.com
     #   7. Both pass → certificate issued
     #
     # CHALLENGES DURING VERIFICATION:
@@ -382,7 +383,7 @@ spec:
 # 2. Traefik gets external IP (your VPS public IP)
 # 3. Deploy cert-manager
 # 4. Create ClusterIssuer (letsencrypt-prod)
-# 5. Point DNS: weatherapp.codewithxjohn.com → VPS IP
+# 5. Point DNS: weather.codewithxjohn.com → VPS IP
 # 6. Apply this Ingress manifest
 #
 # CERTIFICATE ACQUISITION (first-time):
@@ -391,9 +392,9 @@ spec:
 # 3. cert-manager creates Certificate resource
 # 4. Certificate resource triggers ACME client
 # 5. ACME client contacts Let's Encrypt:
-#      "I want cert for weatherapp.codewithxjohn.com and www.weatherapp.codewithxjohn.com"
+#      "I want cert for weather.codewithxjohn.com and www.weather.codewithxjohn.com"
 # 6. Let's Encrypt responds with challenge:
-#      "PUT this token at http://weatherapp.codewithxjohn.com/.well-known/acme-challenge/abc123"
+#      "PUT this token at http://weather.codewithxjohn.com/.well-known/acme-challenge/abc123"
 # 7. cert-manager creates temporary Ingress for challenge
 # 8. Let's Encrypt requests challenge URL
 # 9. cert-manager responds correctly
@@ -404,10 +405,10 @@ spec:
 # 14. Done! HTTPS now works
 #
 # RUNTIME REQUEST FLOW:
-# User types: https://weatherapp.codewithxjohn.com/weather
+# User types: https://weather.codewithxjohn.com/weather
 #
 # 1. BROWSER DNS:
-#    Browser: "What's IP for weatherapp.codewithxjohn.com?"
+#    Browser: "What's IP for weather.codewithxjohn.com?"
 #    DNS: "1.2.3.4"
 #
 # 2. TCP CONNECTION:
@@ -419,7 +420,7 @@ spec:
 #    Traefik: "Server Hello" + certificate (from weather-app-tls Secret)
 #    Browser: Validates certificate:
 #      - Issued by trusted CA (Let's Encrypt) ✓
-#      - Domain matches (weatherapp.codewithxjohn.com) ✓
+#      - Domain matches (weather.codewithxjohn.com) ✓
 #      - Not expired ✓
 #      - Signature valid ✓
 #    Browser + Traefik: Exchange keys, establish encrypted session
@@ -427,30 +428,31 @@ spec:
 # 4. HTTPS REQUEST:
 #    Browser → Traefik (encrypted):
 #      GET /weather HTTP/1.1
-#      Host: weatherapp.codewithxjohn.com
+#      Host: weather.codewithxjohn.com
 #      [other headers...]
 #
 # 5. TRAEFIK PROCESSING:
 #    Traefik decrypts request
 #    Traefik checks Ingress rules:
-#      - Host: weatherapp.codewithxjohn.com ✓ (matches rule 1)
+#      - Host: weather.codewithxjohn.com ✓ (matches rule 1)
 #      - Path: /weather ✓ (matches "/" Prefix)
-#      - Backend: weather-app service, port 8080 ✓
+#      - Backend: weather-app service, port 80 ✓
 #
 # 6. SERVICE LOOKUP:
 #    Traefik → Kubernetes API: "Get Service 'weather-app' endpoints"
 #    K8s responds: [172.17.0.5:8080, 172.17.0.6:8080]
 #
 # 7. FORWARD TO SERVICE:
-#    Traefik → Service ClusterIP (10.96.10.50:8080)
+#    Traefik → Service ClusterIP (10.96.10.50:80)
 #      GET /weather HTTP/1.1
-#      Host: weatherapp.codewithxjohn.com
+#      Host: weather.codewithxjohn.com
 #      X-Forwarded-For: <user-ip>
 #      X-Forwarded-Proto: https
 #      [Traefik adds headers indicating original request was HTTPS]
 #
 # 8. SERVICE LOAD BALANCING:
-#    iptables intercepts: 10.96.10.50:8080
+#    iptables intercepts: 10.96.10.50:80
+#    Port translation: 80 → 8080 (targetPort)
 #    Random selection: 172.17.0.5:8080 (Pod #1)
 #    DNAT: destination → 172.17.0.5:8080
 #

@@ -22,13 +22,13 @@ metadata:
   # - svc.cluster.local: cluster domain
   #
   # USAGE FROM OTHER PODS:
-  # - curl http://weather-app:8080/  (short form, same namespace)
-  # - curl http://weather-app.default:8080/  (with namespace)
-  # - curl http://weather-app.default.svc.cluster.local:8080/  (full FQDN)
+  # - curl http://weather-app:80/  (short form, same namespace)
+  # - curl http://weather-app.default:80/  (with namespace)
+  # - curl http://weather-app.default.svc.cluster.local:80/  (full FQDN)
   #
   # USAGE FROM INGRESS:
   # - Ingress references this by name: weather-app
-  # - Forwards http://weatherapp.codewithxjohn.com → http://weather-app:8080
+  # - Forwards http://weather.codewithxjohn.com → http://weather-app:80
 
 spec:
   selector:
@@ -64,21 +64,20 @@ spec:
     # - Retransmits lost packets
     # - Perfect for web applications
     
-    port: 8080
+    port: 80
     # WHAT: Port the Service listens on (cluster-internal)
     # THIS IS: The port other services/ingress use to reach this service
-    # USAGE: Ingress → http://weather-app:8080/
+    # USAGE: Ingress → http://weather-app:80/
     #
     # ANALOGY: Like a receptionist desk number
     # - External visitors see "Reception" (Service name)
-    # - They call extension 8080 (Service port)
+    # - They call extension 80 (Service port)
     # - Receptionist routes to an employee (targetPort on pod)
     #
-    # CAN BE DIFFERENT from targetPort:
-    # Example: port: 80 → targetPort: 8080
-    # Ingress connects on 80, Service forwards to pod's 8080
-    #
-    # WE USE SAME: port: 8080 = targetPort: 8080 (simpler, clearer)
+    # PORT TRANSLATION:
+    # port: 80 → targetPort: 8080
+    # Ingress connects on 80 (HTTP standard), Service forwards to pod's 8080 (non-root)
+    # This provides consistency across services while maintaining security
     
     targetPort: 8080
     # WHAT: Port on the pod that receives traffic
@@ -88,13 +87,13 @@ spec:
     # - Dockerfile → EXPOSE 8080
     #
     # HOW TRAFFIC FLOWS:
-    # Ingress → Service IP:8080 → Pod IP:8080 → nginx container port 8080
+    # Ingress → Service IP:80 → Pod IP:8080 → nginx container port 8080
     #
     # WHY DIFFERENT FIELDS?
     # Allows port translation:
     # - Service listens on port 80 (standard HTTP)
     # - Routes to targetPort 8080 (non-root user requirement)
-    # - Legacy systems can connect to :80, modern apps run on :8080
+    # - Ingress connects to :80 (standard), pods run on :8080 (secure)
   
   type: ClusterIP
   # WHAT: Type of Service (how it's exposed)
@@ -170,8 +169,8 @@ spec:
 #   4. Pod responds directly to client (no return through service)
 #
 # EXAMPLE FLOW:
-# Ingress → 10.96.10.50:8080 (Service)
-#        → iptables picks random endpoint
+# Ingress → 10.96.10.50:80 (Service)
+#        → iptables picks random endpoint (translates 80→8080)
 #        → 172.17.0.5:8080 (Pod #1)
 #        → nginx serves response
 #        → Response goes directly back to Ingress
@@ -192,16 +191,16 @@ spec:
 #   search default.svc.cluster.local svc.cluster.local cluster.local
 #
 # RESOLUTION:
-# Pod container: curl http://weather-app:8080/
+# Pod container: curl http://weather-app:80/
 # 1. Check /etc/resolv.conf
 # 2. Try: weather-app.default.svc.cluster.local
 # 3. DNS returns: 10.96.10.50
-# 4. Connect to: 10.96.10.50:8080
-# 5. iptables redirect to pod IP
+# 4. Connect to: 10.96.10.50:80
+# 5. iptables redirect to pod IP (port translation 80→8080)
 #
 # CROSS-NAMESPACE:
 # If frontend in 'prod' namespace needs to call us in 'default':
-#   curl http://weather-app.default:8080/
+#   curl http://weather-app.default:80/
 #   (must include namespace when crossing boundaries)
 #
 # EXTERNAL ACCESS:
@@ -217,13 +216,14 @@ spec:
 # ============================================
 #
 # REQUEST ARRIVES:
-# 1. Ingress receives: http://weatherapp.codewithxjohn.com/
-# 2. Ingress rule: route to service 'weather-app' port 8080
+# 1. Ingress receives: http://weather.codewithxjohn.com/
+# 2. Ingress rule: route to service 'weather-app' port 80
 # 3. Ingress resolves DNS: weather-app → 10.96.10.50
-# 4. Ingress sends: GET / to 10.96.10.50:8080
+# 4. Ingress sends: GET / to 10.96.10.50:80
 #
 # SERVICE PROCESSES:
-# 5. iptables intercepts: destination=10.96.10.50:8080
+# 5. iptables intercepts: destination=10.96.10.50:80
+# 6. Translates to pod endpoint (80→8080)
 # 6. iptables lookup: endpoints for service 'weather-app'
 # 7. Endpoints: [172.17.0.5:8080, 172.17.0.6:8080]
 # 8. iptables random selection: 172.17.0.5:8080 (Pod #1)
@@ -306,8 +306,9 @@ spec:
 # $ nslookup weather-app
 # 
 # Port forward for local testing:
-# $ kubectl port-forward service/weather-app 8080:8080
+# $ kubectl port-forward service/weather-app 8080:80
 # $ curl http://localhost:8080/  (from your machine)
+# (forwards local 8080 to service port 80, which routes to pod 8080)
 #
 # Watch Service events:
 # $ kubectl get events --field-selector involvedObject.name=weather-app
